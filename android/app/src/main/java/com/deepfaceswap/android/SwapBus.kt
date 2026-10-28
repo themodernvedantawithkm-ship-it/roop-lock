@@ -75,6 +75,10 @@ object SwapBus {
             val enhancerStrength: Float,
             val keepAudio: Boolean,
             val colorMatch: Boolean,
+            /** Leave the target's mouth and lips as they are. */
+            val keepLips: Boolean,
+            /** 0.0 the untouched face .. 1.0 the swap in full. */
+            val faceBlend: Float,
             /** Clones of the model to run in parallel; 1 means a single session. */
             val clones: Int,
             val originalPath: String,
@@ -90,6 +94,10 @@ object SwapBus {
             val enhancerStrength: Float,
             val mappings: List<Pair<Int, Int>>,
             val animate: Boolean,
+            /** Leave the target's mouth and lips as they are. */
+            val keepLips: Boolean,
+            /** 0.0 the untouched face .. 1.0 the swap in full. */
+            val faceBlend: Float,
             val swapEveryFace: Boolean,
             val colorMatch: Boolean,
             val originalPath: String,

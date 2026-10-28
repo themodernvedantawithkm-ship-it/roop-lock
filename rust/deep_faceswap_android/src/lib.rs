@@ -64,6 +64,9 @@ fn with_session<T>(
 /// A process-wide switch rather than a new argument on every entry point: it is
 /// set once per job by the app, and this keeps five JNI signatures untouched.
 static COLOR_MATCH: AtomicBool = AtomicBool::new(true);
+/// Face Blend, stored as f32 bits because atomics have no f32. 1.0 = full swap.
+static FACE_BLEND: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3F80_0000); // 1.0f32
 
 /// Copy a Java string into a Rust `String` (empty string on failure).
 fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
@@ -138,6 +141,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapImage(
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     // Reset progress so a stale value from a previous run can never be shown.
@@ -315,6 +319,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapImageMappe
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     STAGE.store(SwapStage::LoadingModels as i32, Ordering::SeqCst);
@@ -411,6 +416,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapAnimation(
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     STAGE.store(SwapStage::LoadingModels as i32, Ordering::SeqCst);
@@ -574,6 +580,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -631,6 +638,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     let input = match env.convert_byte_array(&frame) {
@@ -696,6 +704,7 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         pixel_boost: pixel_boost.clamp(1, MAX_PIXEL_BOOST as i32) as u32,
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
+        face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
     };
 
     let input = match env.convert_byte_array(&frame) {
@@ -859,6 +868,14 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_setColorMatchN
     enabled: jboolean,
 ) {
     COLOR_MATCH.store(enabled != 0, Ordering::Relaxed);
+}
+
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_setFaceBlendNative(
+    _env: JNIEnv,
+    _class: JClass,
+    blend: jfloat,
+) {
+    FACE_BLEND.store(blend.to_bits(), Ordering::Relaxed);
 }
 
 /// Release the swap session and free its models.

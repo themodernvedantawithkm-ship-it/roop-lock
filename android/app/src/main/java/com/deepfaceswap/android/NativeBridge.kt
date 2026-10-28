@@ -313,6 +313,8 @@ object NativeBridge {
 
     private external fun setColorMatchNative(enabled: Boolean)
 
+    private external fun setFaceBlendNative(blend: Float)
+
     private external fun sessionSwapFrameRawWorker(
         worker: Int,
         width: Int,
@@ -482,6 +484,11 @@ object NativeBridge {
      */
     fun setColorMatch(enabled: Boolean) {
         runCatching { setColorMatchNative(enabled) }
+    }
+
+    /** 0.0 the untouched face .. 1.0 the swap in full. */
+    fun setFaceBlend(blend: Float) {
+        runCatching { setFaceBlendNative(blend.coerceIn(0f, 1f)) }
     }
 
     /** Release the session and free its models. Safe to call when none is open. */

@@ -73,6 +73,13 @@ pub struct SwapOptions {
     pub enhancer_strength: f32,
     /// Match the swapped face's colour to the target's own skin tone and light.
     pub color_match: bool,
+    /// How much of the swapped face to keep, 0.0 = the untouched target face,
+    /// 1.0 = the swap in full.
+    ///
+    /// This is the honest lever behind "Face Blend". Below 1.0 the swapped face
+    /// is mixed back toward the original aligned target, so the result keeps some
+    /// of the original's structure - useful when a strong swap reads as a mask.
+    pub face_blend: f32,
 }
 
 impl Default for SwapOptions {
@@ -83,6 +90,7 @@ impl Default for SwapOptions {
             pixel_boost: 1,
             enhancer_strength: 1.0,
             color_match: true,
+            face_blend: 1.0,
         }
     }
 }
@@ -208,6 +216,30 @@ pub fn swap_single_pair_opts(
             source_frame.as_ref(),
             grid,
         )?
+    };
+
+    // Face Blend: pull the swapped face back toward the original target face.
+    //
+    // Applied here, before the first paste, so both the plain path and the
+    // enhancer path inherit it - the enhancer re-aligns from the image that this
+    // paste produced.
+    let blend = opts.face_blend.clamp(0.0, 1.0);
+    let swapped_face = if blend >= 0.999 {
+        swapped_face
+    } else {
+        let mut mixed = swapped_face;
+        let original = &target_aligned.aligned_image;
+        let side = swap_size as usize;
+        for c in 0..3usize {
+            for y in 0..side {
+                for x in 0..side {
+                    let sw = mixed[[0, c, y, x]];
+                    let og = original[[0, c, y, x]];
+                    mixed[[0, c, y, x]] = og * (1.0 - blend) + sw * blend;
+                }
+            }
+        }
+        mixed
     };
 
     // The swapper works in normalised f32, so the colour reference is the

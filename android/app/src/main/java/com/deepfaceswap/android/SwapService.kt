@@ -90,6 +90,7 @@ class SwapService : Service() {
         }
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
+        NativeBridge.setFaceBlend(job.faceBlend)
         NativeBridge.setCloneCount(job.clones)
 
         val result = VideoSwap(this).swap(
@@ -98,7 +99,7 @@ class SwapService : Service() {
             sourcePaths = job.sourcePaths,
             mappings = emptyList(),
             swapperFile = job.swapperFile,
-            useMouthMask = false,
+            useMouthMask = job.keepLips,
             pixelBoost = job.pixelBoost,
             enhancerStrength = job.enhancerStrength,
             keepAudio = job.keepAudio,
@@ -136,21 +137,22 @@ class SwapService : Service() {
         }
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
+        NativeBridge.setFaceBlend(job.faceBlend)
 
         val ok = if (job.animate) {
             NativeBridge.swapAnimation(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
-                job.mappings, job.swapperFile, false, job.pixelBoost, job.enhancerStrength,
+                job.mappings, job.swapperFile, job.keepLips, job.pixelBoost, job.enhancerStrength,
             ).ok
         } else if (job.mappings.isNotEmpty()) {
             NativeBridge.swapMapped(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
-                job.mappings, job.swapperFile, false, job.pixelBoost, job.enhancerStrength,
+                job.mappings, job.swapperFile, job.keepLips, job.pixelBoost, job.enhancerStrength,
             ).ok
         } else {
             NativeBridge.swap(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
-                job.swapperFile, false, job.swapEveryFace, job.pixelBoost, job.enhancerStrength,
+                job.swapperFile, job.keepLips, job.swapEveryFace, job.pixelBoost, job.enhancerStrength,
             ).ok
         }
 

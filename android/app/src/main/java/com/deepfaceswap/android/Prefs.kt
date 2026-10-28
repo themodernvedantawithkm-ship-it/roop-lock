@@ -56,6 +56,24 @@ class Prefs(context: Context) {
         get() = sp.getInt("clones", 2).coerceIn(1, 4)
         set(value) = sp.edit().putInt("clones", value.coerceIn(1, 4)).apply()
 
+    /**
+     * Output image format: "Auto" keeps whatever the target was, otherwise one of
+     * jpg / png / webp.
+     */
+    var outputFormat: String
+        get() = sp.getString("output_format", "Auto") ?: "Auto"
+        set(v) = sp.edit().putString("output_format", v).apply()
+
+    /** Leave the target's mouth and lips untouched by the swap. */
+    var keepLips: Boolean
+        get() = sp.getBoolean("keep_lips", false)
+        set(v) = sp.edit().putBoolean("keep_lips", v).apply()
+
+    /** 0.0 the untouched face .. 1.0 the swap in full. */
+    var faceBlend: Float
+        get() = sp.getFloat("face_blend", 1f)
+        set(v) = sp.edit().putFloat("face_blend", v.coerceIn(0f, 1f)).apply()
+
     var colorMatch: Boolean
         get() = sp.getBoolean("color_match", true)
         set(value) = sp.edit().putBoolean("color_match", value).apply()

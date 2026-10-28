@@ -661,8 +661,68 @@ class MainActivity : Activity() {
             }
         })
         swapTiles.addView(RoopUi.optionTile(
-            this, R.drawable.ic_scan, "Face Blend", "Not available", enabled = false,
-        ))
+            this, R.drawable.ic_cube, "Model", swapperLabel(),
+        ).apply {
+            setOnClickListener {
+                val options = modelOptions()
+                showSheet(
+                    "Swapper model",
+                    options.map { it.second },
+                    options.indexOfFirst { it.first == swapperFile }.coerceAtLeast(0),
+                    options.map { it.third },
+                ) { pick ->
+                    swapperFile = options[pick].first
+                    prefs.modelFile = swapperFile
+                    refreshSwap(); refreshVideo()
+                }
+            }
+        })
+        swapTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_scan, "Face Blend", blendLabel(prefs.faceBlend),
+        ).apply {
+            setOnClickListener {
+                val labels = listOf("Off", "Soft", "Medium", "Full")
+                val values = listOf(0f, 0.6f, 0.8f, 1f)
+                showSheet(
+                    "Face Blend", labels, values.indexOf(prefs.faceBlend).coerceAtLeast(3),
+                    listOf(
+                        "The swap is not applied at all.",
+                        "Keep most of the original face's structure.",
+                        "A middle ground, when a full swap reads as a mask.",
+                        "The swap in full.",
+                    ),
+                ) { pick -> prefs.faceBlend = values[pick]; refreshSwap(); refreshVideo() }
+            }
+        })
+        swapTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_shield, "Keep lips", if (prefs.keepLips) "On" else "Off",
+        ).apply {
+            setOnClickListener {
+                showSheet(
+                    "Keep lips", listOf("Off", "On"), if (prefs.keepLips) 1 else 0,
+                    listOf(
+                        "The swapped face brings its own mouth.",
+                        "Leave the target's mouth and lips as they are.",
+                    ),
+                ) { pick -> prefs.keepLips = pick == 1; refreshSwap(); refreshVideo() }
+            }
+        })
+        swapTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_image, "Format", prefs.outputFormat,
+        ).apply {
+            setOnClickListener {
+                val labels = listOf("Auto", "jpg", "png", "webp")
+                showSheet(
+                    "Output format", labels, labels.indexOf(prefs.outputFormat).coerceAtLeast(0),
+                    listOf(
+                        "Keep the format the target image came in.",
+                        "Smallest files. No transparency.",
+                        "Lossless. Largest files.",
+                        "Small files with transparency.",
+                    ),
+                ) { pick -> prefs.outputFormat = labels[pick]; refreshSwap() }
+            }
+        })
         swapTiles.addView(RoopUi.optionTile(
             this, R.drawable.ic_palette, "Color Match", if (prefs.colorMatch) "On" else "Off",
         ).apply {
@@ -886,11 +946,55 @@ class MainActivity : Activity() {
             }
         })
         vidTiles.addView(RoopUi.optionTile(
-            this, R.drawable.ic_scan, "Face Blend", "Not available", enabled = false,
-        ))
+            this, R.drawable.ic_cube, "Model", swapperLabel(),
+        ).apply {
+            setOnClickListener {
+                val options = modelOptions()
+                showSheet(
+                    "Swapper model",
+                    options.map { it.second },
+                    options.indexOfFirst { it.first == swapperFile }.coerceAtLeast(0),
+                    options.map { it.third },
+                ) { pick ->
+                    swapperFile = options[pick].first
+                    prefs.modelFile = swapperFile
+                    refreshSwap(); refreshVideo()
+                }
+            }
+        })
         vidTiles.addView(RoopUi.optionTile(
-            this, R.drawable.ic_shield, "Similarity", "Not available", enabled = false,
-        ))
+            this, R.drawable.ic_scan, "Face Blend", blendLabel(prefs.faceBlend),
+        ).apply {
+            setOnClickListener {
+                val labels = listOf("Off", "Soft", "Medium", "Full")
+                val values = listOf(0f, 0.6f, 0.8f, 1f)
+                showSheet(
+                    "Face Blend", labels, values.indexOf(prefs.faceBlend).coerceAtLeast(3),
+                    listOf(
+                        "The swap is not applied at all.",
+                        "Keep most of the original face's structure.",
+                        "A middle ground, when a full swap reads as a mask.",
+                        "The swap in full.",
+                    ),
+                ) { pick -> prefs.faceBlend = values[pick]; refreshSwap(); refreshVideo() }
+            }
+        })
+        vidTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_shield, "Keep lips", if (prefs.keepLips) "On" else "Off",
+        ).apply {
+            setOnClickListener {
+                showSheet(
+                    "Keep lips",
+                    listOf("Off", "On"),
+                    if (prefs.keepLips) 1 else 0,
+                    listOf(
+                        "The swapped face brings its own mouth.",
+                        "Leave the target's mouth and lips as they are. " +
+                            "The engine keeps them through a 106-point mouth mask.",
+                    ),
+                ) { pick -> prefs.keepLips = pick == 1; refreshSwap(); refreshVideo() }
+            }
+        })
         vidTiles.addView(RoopUi.optionTile(
             this, R.drawable.ic_palette, "Color Match", if (prefs.colorMatch) "On" else "Off",
         ).apply {
@@ -2207,9 +2311,11 @@ class MainActivity : Activity() {
 
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outDir = File(getExternalFilesDir(null), "outputs").apply { mkdirs() }
+        val chosen = prefs.outputFormat
         val ext = when {
             video -> "mp4"
-            isAnimation(target.name) -> "gif"
+            isAnimation(target.name) && chosen == "Auto" -> "gif"
+            chosen != "Auto" -> chosen
             else -> encodableExtension(target.name)
         }
         val output = File(outDir, "roop_$stamp.$ext")
@@ -2230,6 +2336,8 @@ class MainActivity : Activity() {
                 enhancerStrength = strength,
                 keepAudio = true,
                 colorMatch = prefs.colorMatch,
+                keepLips = prefs.keepLips,
+                faceBlend = prefs.faceBlend,
                 clones = prefs.clones,
                 originalPath = target.absolutePath,
                 modelLabel = label,
@@ -2244,6 +2352,8 @@ class MainActivity : Activity() {
                 enhancerStrength = strength,
                 mappings = if (manual) mappings.toList() else emptyList(),
                 animate = isAnimation(target.name),
+                keepLips = prefs.keepLips,
+                faceBlend = prefs.faceBlend,
                 swapEveryFace = faceMode == 1,
                 colorMatch = prefs.colorMatch,
                 originalPath = target.absolutePath,
@@ -2865,6 +2975,17 @@ class MainActivity : Activity() {
         }
     } catch (_: Throwable) {
         0L
+    }
+
+    /** The chosen swapper's display name, for the option tile. */
+    private fun swapperLabel(): String =
+        modelOptions().firstOrNull { it.first == swapperFile }?.second ?: "inswapper 128"
+
+    private fun blendLabel(value: Float): String = when {
+        value <= 0.01f -> "Off"
+        value < 0.7f -> "Soft"
+        value < 0.95f -> "Medium"
+        else -> "Full"
     }
 
     private fun isVideo(name: String): Boolean =
