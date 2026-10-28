@@ -71,6 +71,10 @@ object Diagnostics {
         val core = runCatching { NativeBridge.version() }.getOrDefault("unavailable")
         lines.add("  native    $core")
         lines.add("  last job  ${lastError ?: "none recorded this session"}")
+        lines.add("")
+
+        lines.add("Trace — every step this app has taken, newest last")
+        lines.addAll(TraceLog.tail(120).map { "  $it" })
 
         return lines
     }

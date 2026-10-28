@@ -64,6 +64,17 @@ class Prefs(context: Context) {
         get() = sp.getString("output_format", "Auto") ?: "Auto"
         set(v) = sp.edit().putString("output_format", v).apply()
 
+    /**
+     * Models the user has switched off.
+     *
+     * A deactivated model is never offered, never chosen and never loaded - which
+     * matters on a phone holding several hundred megabytes of weights, because
+     * the point of turning one off is to keep it out of the job entirely.
+     */
+    var disabledModels: Set<String>
+        get() = sp.getStringSet("disabled_models", emptySet()) ?: emptySet()
+        set(v) = sp.edit().putStringSet("disabled_models", v).apply()
+
     /** Leave the target's mouth and lips untouched by the swap. */
     var keepLips: Boolean
         get() = sp.getBoolean("keep_lips", false)

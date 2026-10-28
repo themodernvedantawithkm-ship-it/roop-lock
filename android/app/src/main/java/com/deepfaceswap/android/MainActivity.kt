@@ -1988,7 +1988,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun modelOptions(): List<Triple<String, String, String>> = listOf(
+    /** Swappers that are switched on. A disabled one is never offered. */
+    private fun modelOptions(): List<Triple<String, String, String>> = allModelOptions()
+        .filter { it.first !in prefs.disabledModels }
+
+    private fun allModelOptions(): List<Triple<String, String, String>> = listOf(
         Triple(ModelManager.INSWAPPER_FILE, "inswapper 128",
             "Fastest \u00B7 128px \u00B7 non-commercial licence"),
         Triple(ModelManager.HYPERSWAP_1A, "HyperSwap 1a 256",
@@ -2010,6 +2014,8 @@ class MainActivity : Activity() {
         } else {
             actions.add("Use Model")
         }
+        val disabled = file in prefs.disabledModels
+        actions.add(if (disabled) "Activate" else "Deactivate")
         if (installed && file != ModelManager.INSWAPPER_FILE) actions.add("Remove")
         actions.add("Details")
 
@@ -2019,6 +2025,8 @@ class MainActivity : Activity() {
                     "${option?.licence ?: "licence unknown"}"
                 "Use Model" -> "Make this the active swapper for new jobs."
                 "Remove" -> "Deletes the downloaded weights from this device."
+                "Deactivate" -> "Keep the file, but never offer or load this model again."
+                "Activate" -> "Offer this model again."
                 else -> "Status, licence and what the model can do."
             }
         }) { pick ->
@@ -2033,6 +2041,17 @@ class MainActivity : Activity() {
                     downloadModels(queue)
                 }
                 "Use Model" -> { swapperFile = file; prefs.modelFile = file; renderSettings() }
+                "Deactivate" -> {
+                    prefs.disabledModels = prefs.disabledModels + file
+                    TraceLog.add("models", "deactivated $file")
+                    if (swapperFile == file) resolveSwapper()
+                    renderSettings(); refreshSwap(); refreshVideo()
+                }
+                "Activate" -> {
+                    prefs.disabledModels = prefs.disabledModels - file
+                    TraceLog.add("models", "activated $file")
+                    renderSettings(); refreshSwap(); refreshVideo()
+                }
                 "Remove" -> {
                     runCatching { File(models.swapperPath(file)).delete() }
                     if (file == ModelManager.GHOST_2) {
@@ -2508,10 +2527,11 @@ class MainActivity : Activity() {
             val percent = (state.fraction * 100f).toInt().coerceIn(0, 100)
             vidBar.visibility = View.VISIBLE
             vidBar.progress = percent
-            vidStatus.text = state.detail
+            val timed = withTiming(state)
+            vidStatus.text = timed
             swapBar.visibility = View.VISIBLE
             swapBar.progress = percent
-            swapStatus.text = state.detail
+            swapStatus.text = timed
         } else if (state.running && state.message.isNotEmpty()) {
             vidStatus.text = state.message
             swapStatus.text = state.message
@@ -3070,6 +3090,38 @@ class MainActivity : Activity() {
         }
     } catch (_: Throwable) {
         0L
+    }
+
+    /**
+     * The status line, with how long it has been and how long is left.
+     *
+     * The estimate is measured from this job rather than assumed: elapsed time
+     * divided by the fraction done. It is shown as "about" because the first few
+     * percent of a video are not representative - the models are still loading
+     * and the first frame pays for that.
+     */
+    private fun withTiming(state: SwapBus.State): String {
+        val base = state.detail
+        val started = state.startedAtMs
+        if (started <= 0L) return base
+        val elapsed = System.currentTimeMillis() - started
+        if (elapsed <= 0L) return base
+        val fraction = state.fraction
+        val sb = StringBuilder(base)
+        sb.append("  \u00B7  ").append(duration(elapsed)).append(" so far")
+        if (fraction > 0.02f) {
+            val total = elapsed / fraction
+            val left = (total - elapsed).coerceAtLeast(0.0).toLong()
+            sb.append("  \u00B7  about ").append(duration(left)).append(" left")
+        }
+        return sb.toString()
+    }
+
+    private fun duration(millis: Long): String {
+        val totalSeconds = millis / 1000
+        val m = totalSeconds / 60
+        val s = totalSeconds % 60
+        return if (m > 0) "${m}m ${s}s" else "${s}s"
     }
 
     /** The chosen swapper's display name, for the option tile. */

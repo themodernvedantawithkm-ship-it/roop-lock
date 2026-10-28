@@ -91,6 +91,17 @@ class SwapService : Service() {
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
         NativeBridge.setFaceBlend(job.faceBlend)
+        TraceLog.add(
+            "image",
+            "start ${File(job.targetPath).name} swapper=${job.swapperFile} " +
+                "boost=${job.pixelBoost} lips=${job.keepLips} blend=${job.faceBlend} " +
+                "restore=${job.enhancerStrength}",
+        )
+        TraceLog.add(
+            "video",
+            "start ${File(job.inputPath).name} clones=${job.clones} boost=${job.pixelBoost} " +
+                "swapper=${job.swapperFile} lips=${job.keepLips} blend=${job.faceBlend}",
+        )
         NativeBridge.setCloneCount(job.clones)
 
         val result = VideoSwap(this).swap(
@@ -116,6 +127,7 @@ class SwapService : Service() {
             },
         )
 
+        if (!result.ok) TraceLog.add("video", "engine returned: ${result.error ?: "no message"}")
         SwapBus.update {
             it.copy(
                 running = false,
@@ -138,22 +150,40 @@ class SwapService : Service() {
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
         NativeBridge.setFaceBlend(job.faceBlend)
+        TraceLog.add(
+            "image",
+            "start ${File(job.targetPath).name} swapper=${job.swapperFile} " +
+                "boost=${job.pixelBoost} lips=${job.keepLips} blend=${job.faceBlend} " +
+                "restore=${job.enhancerStrength}",
+        )
+        TraceLog.add(
+            "video",
+            "start ${File(job.inputPath).name} clones=${job.clones} boost=${job.pixelBoost} " +
+                "swapper=${job.swapperFile} lips=${job.keepLips} blend=${job.faceBlend}",
+        )
 
-        val ok = if (job.animate) {
+        // Keep the whole result. Only `.ok` used to be read, so the engine's own
+        // error string - the one sentence that says what went wrong - was thrown
+        // away and replaced with a fixed sentence that explained nothing.
+        val result = if (job.animate) {
             NativeBridge.swapAnimation(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
                 job.mappings, job.swapperFile, job.keepLips, job.pixelBoost, job.enhancerStrength,
-            ).ok
+            )
         } else if (job.mappings.isNotEmpty()) {
             NativeBridge.swapMapped(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
                 job.mappings, job.swapperFile, job.keepLips, job.pixelBoost, job.enhancerStrength,
-            ).ok
+            )
         } else {
             NativeBridge.swap(
                 this, job.sourcePaths, job.targetPath, job.outputPath,
                 job.swapperFile, job.keepLips, job.swapEveryFace, job.pixelBoost, job.enhancerStrength,
-            ).ok
+            )
+        }
+        val ok = result.ok
+        if (!ok) {
+            TraceLog.add("swap", "engine returned: ${result.error ?: "no message"}")
         }
 
         SwapBus.update {
@@ -161,7 +191,7 @@ class SwapService : Service() {
                 running = false,
                 stage = if (ok) SwapBus.Stage.DONE else SwapBus.Stage.FAILED,
                 resultPath = if (ok) job.outputPath else null,
-                error = if (ok) null else "The swap could not be completed.",
+                error = if (ok) null else (result.error ?: "The swap could not be completed."),
             )
         }
     }
