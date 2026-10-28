@@ -151,6 +151,8 @@ class MainActivity : Activity() {
         vMute = prefs.muteAudio
         models.ensureDirs()
         models.copyEmapFromAssetsIfPresent()
+        runCatching { resolveSwapper() }
+        runCatching { resolveEnhancer() }
 
         val shell = buildShell()
         setContentView(shell)
@@ -1950,6 +1952,42 @@ class MainActivity : Activity() {
     }
 
     /** The real swapper catalogue — no invented product names. */
+    /**
+     * Point [swapperFile] at a swapper that is actually on disk.
+     *
+     * The default is inswapper 128, and nothing used to check that it existed.
+     * A device with only HyperSwap installed therefore tried to swap with an
+     * absent file on every job - which is exactly the report that showed
+     * inswapper missing while 384 MB of HyperSwap sat on disk unused.
+     *
+     * Returns the file now in use, or null when no swapper is installed at all.
+     */
+    private fun resolveSwapper(): String? {
+        val present = modelOptions().map { it.first }.filter { file ->
+            val f = File(models.modelsDir, file)
+            f.isFile && f.length() > 1_000_000L
+        }
+        if (present.isEmpty()) return null
+        if (swapperFile in present) return swapperFile
+        val chosen = present.first()
+        swapperFile = chosen
+        prefs.modelFile = chosen
+        return chosen
+    }
+
+    /**
+     * Turn restore off when the enhancer is not on disk, so the option cannot
+     * silently cost a job.
+     */
+    private fun resolveEnhancer() {
+        if (!restoreOn) return
+        val f = File(models.modelsDir, ModelManager.ENHANCER_FILE)
+        if (!f.isFile || f.length() < 1_000_000L) {
+            restoreOn = false
+            prefs.restore = false
+        }
+    }
+
     private fun modelOptions(): List<Triple<String, String, String>> = listOf(
         Triple(ModelManager.INSWAPPER_FILE, "inswapper 128",
             "Fastest \u00B7 128px \u00B7 non-commercial licence"),
@@ -2315,13 +2353,20 @@ class MainActivity : Activity() {
         // uninstall or a "Clear data" removes them, and nothing in the old code
         // checked before handing the job to the service. The result was a job that
         // appeared to start and produced nothing, with no explanation anywhere.
-        val swapperPath = File(models.modelsDir, swapperFile)
-        if (!swapperPath.isFile || swapperPath.length() < 1_000_000L) {
-            val msg = "Missing the swapper model ($swapperFile). Open Models and download it."
+        val before = swapperFile
+        val usable = resolveSwapper()
+        if (usable == null) {
+            val msg = "No swapper model is installed. Open Models and download one."
             swapStatus.text = msg
             toast(msg)
             return
         }
+        if (usable != before) {
+            val label = modelOptions().firstOrNull { it.first == usable }?.second ?: usable
+            toast("Using $label \u2014 the previous choice is not installed")
+            renderSwapTiles()
+        }
+        resolveEnhancer()
         val detectorPath = File(models.buffaloDir, "det_10g.onnx")
         if (!detectorPath.isFile || detectorPath.length() < 1_000_000L) {
             val msg = "Missing the face detector (det_10g). Open Models and download the buffalo_l set."
@@ -2405,6 +2450,20 @@ class MainActivity : Activity() {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outDir = File(getExternalFilesDir(null), "outputs").apply { mkdirs() }
         val output = File(outDir, "roop_$stamp.mp4")
+        val beforeV = swapperFile
+        if (resolveSwapper() == null) {
+            val msg = "No swapper model is installed. Open Models and download one."
+            vidStatus.text = msg
+            toast(msg)
+            return
+        }
+        if (swapperFile != beforeV) {
+            val label = modelOptions().firstOrNull { it.first == swapperFile }?.second ?: swapperFile
+            toast("Using $label \u2014 the previous choice is not installed")
+            renderSwapTiles()
+        }
+        resolveEnhancer()
+
         val sources = vSources.map { it.absolutePath }
         val strength = if (restoreOn) prefs.restoreStrength else 1f
         val label = modelOptions().firstOrNull { it.first == swapperFile }?.second ?: swapperFile
