@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">Photo Tools</string>
-    <string name="tagline">Your Face. Your Creation.</string>
+    <string name="tagline">Photos, edited on this phone.</string>
     <string name="private_label">Private</string>
 </resources>

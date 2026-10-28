@@ -243,7 +243,7 @@ class MainActivity : Activity() {
         })
         row.addView(brand, RoopUi.weight(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
-        row.addView(iconButton(R.drawable.ic_crown, "Roop Pro", R.drawable.bg_crown) { showPro() })
+        row.addView(iconButton(R.drawable.ic_crown, "Pro", R.drawable.bg_crown) { showPro() })
         row.addView(iconButton(R.drawable.ic_settings, "Settings") { show("settings") })
         row.addView(iconButton(R.drawable.ic_dots, "More options") { showOverflow() })
         return row
@@ -1884,7 +1884,7 @@ class MainActivity : Activity() {
     }
 
     private fun showPro() {
-        showSheet("Roop Pro", listOf("Not available in this build"), -1,
+        showSheet("Pro", listOf("Not available in this build"), -1,
             listOf("There is no paid tier yet. Everything here already runs on your device, " +
                 "with no account and no upload.")) { }
     }
