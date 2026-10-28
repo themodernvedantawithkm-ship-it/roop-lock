@@ -2463,8 +2463,73 @@ class MainActivity : Activity() {
         SwapService.start(this)
     }
 
+    /**
+     * A GIF or animated WebP: every frame swapped through the image path.
+     *
+     * Deliberately the same machinery the Face Swap screen uses, because the
+     * engine's animation call already handles multi-frame files. Only the job
+     * type differs.
+     */
+    private fun runAnimation(target: File) {
+        val before = swapperFile
+        if (resolveSwapper() == null) {
+            val msg = "No swapper model is installed. Open Models and download one."
+            vidStatus.text = msg
+            toast(msg)
+            return
+        }
+        if (swapperFile != before) {
+            val label = modelOptions().firstOrNull { it.first == swapperFile }?.second ?: swapperFile
+            toast("Using $label \u2014 the previous choice is not installed")
+            renderSwapTiles()
+        }
+        resolveEnhancer()
+        if (vSources.isEmpty()) {
+            toast("Choose a source face first")
+            return
+        }
+
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val outDir = File(getExternalFilesDir(null), "outputs").apply { mkdirs() }
+        val output = File(outDir, "roop_$stamp.gif")
+        val strength = if (restoreOn) prefs.restoreStrength else 1f
+        val label = modelOptions().firstOrNull { it.first == swapperFile }?.second ?: swapperFile
+
+        SwapBus.pending = SwapBus.Job.Image(
+            sourcePaths = vSources.map { it.absolutePath },
+            targetPath = target.absolutePath,
+            outputPath = output.absolutePath,
+            swapperFile = swapperFile,
+            pixelBoost = qualityGrid(),
+            enhancerStrength = strength,
+            mappings = emptyList(),
+            animate = true,
+            keepLips = prefs.keepLips,
+            faceBlend = prefs.faceBlend,
+            swapEveryFace = false,
+            colorMatch = prefs.colorMatch,
+            originalPath = target.absolutePath,
+            modelLabel = label,
+        )
+        setVideoBusy(true, "Preparing\u2026")
+        requestNotificationConsent()
+        SwapService.start(this)
+    }
+
     private fun runVideo() {
         val target = vTarget ?: return
+
+        // A GIF or an animated WebP is not a video container. MediaExtractor
+        // cannot open either of them - it throws "Failed to instantiate
+        // extractor" - so an animation picked on this screen used to fail every
+        // time. They are frames, not a stream, and the engine already has a
+        // dedicated animation path: send them there.
+        if (isAnimation(target.name)) {
+            TraceLog.add("video", "target is an animation (${target.name}); using the frame path")
+            runAnimation(target)
+            return
+        }
+
         if (qualityIndex == 3) qualityIndex = 2
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outDir = File(getExternalFilesDir(null), "outputs").apply { mkdirs() }

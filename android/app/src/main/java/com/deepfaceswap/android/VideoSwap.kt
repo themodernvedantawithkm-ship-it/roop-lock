@@ -284,11 +284,20 @@ class VideoSwap(private val context: Context) {
             return Result(true, frames, null)
         } catch (e: Throwable) {
             // Never let a media failure take the app down: report it instead.
-            return Result(
-                false, 0,
-                "Failed while $stage \u2014 ${e.javaClass.simpleName}: " +
-                    (e.message ?: "no detail"),
-            )
+            //
+            // "Failed to instantiate extractor" is what MediaExtractor says for a
+            // container it cannot open at all - which includes a GIF or a WebP,
+            // neither of which is a video. Say so, because the raw message sends
+            // people looking for a broken file when the format is simply not one.
+            val raw = "${e.javaClass.simpleName}: ${e.message ?: "no detail"}"
+            val hint = when {
+                raw.contains("instantiate extractor", ignoreCase = true) ->
+                    " This device's video reader cannot open that container. GIF and animated " +
+                        "WebP are not video - use the Swap screen for those. MP4 (H.264) is the " +
+                        "safest choice here."
+                else -> ""
+            }
+            return Result(false, 0, "Failed while $stage \u2014 $raw$hint")
         } finally {
             decodeThread?.interrupt()
             swapThreads.forEach { it.interrupt() }
