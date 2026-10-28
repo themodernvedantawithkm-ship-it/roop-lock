@@ -277,6 +277,26 @@ object RoopUi {
             pressScale(this)
         }
 
+    /**
+     * The outlined counterpart to [primaryButton], for an action that prepares
+     * something rather than starting it - the video preview, for instance.
+     */
+    fun secondaryButton(ctx: Context, label: String, iconRes: Int?): LinearLayout =
+        LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = ctx.getDrawable(R.drawable.bg_pill_soft)
+            isClickable = true
+            setPadding(dp(ctx, 18), 0, dp(ctx, 18), 0)
+            layoutParams = margin(ctx, ViewGroup.LayoutParams.MATCH_PARENT, dp(ctx, 46),
+                0, 6, 0, 0)
+            if (iconRes != null) {
+                addView(iconView(ctx, iconRes, 18, R.color.blue))
+                addView(View(ctx).apply { layoutParams = lp(dp(ctx, 8), 1) })
+            }
+            addView(text(ctx, label, 15f, R.color.blue, 1).apply { tag = "label" })
+        }
+
     fun setPrimaryEnabled(button: View, enabled: Boolean) {
         button.isEnabled = enabled
         button.alpha = 1f

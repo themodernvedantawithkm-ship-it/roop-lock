@@ -53,7 +53,7 @@ class Prefs(context: Context) {
 
     /** Clones of the chosen model to run in parallel. 1 disables it. */
     var clones: Int
-        get() = sp.getInt("clones", 1).coerceIn(1, 4)
+        get() = sp.getInt("clones", 2).coerceIn(1, 4)
         set(value) = sp.edit().putInt("clones", value.coerceIn(1, 4)).apply()
 
     var colorMatch: Boolean

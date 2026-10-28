@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Dark palette.
+
+    Android swaps these in automatically when the system is in dark mode, and the
+    activity does not declare uiMode in configChanges, so it is rebuilt and every
+    screen is constructed again with these values. No toggle to write, and no
+    per-screen colour logic to keep in sync.
+
+    The hues stay the same; what changes is which end of the scale is the
+    background. Cards become lighter than the canvas instead of white, so the
+    depth ordering that the light theme gets from shadows survives without them.
+-->
+<resources>
+    <color name="canvas">#0E1220</color>
+    <color name="canvas_cool">#111728</color>
+
+    <color name="surface">#EB1A2134</color>
+    <color name="surface_solid">#1A2134</color>
+    <color name="surface_soft">#232C42</color>
+    <color name="surface_selected">#2A3550</color>
+
+    <color name="ink">#EEF2FB</color>
+    <color name="ink_secondary">#A7B2CB</color>
+    <color name="ink_muted">#7C87A1</color>
+
+    <!-- On dark, a white hairline reads as glare, so borders are a cool grey. -->
+    <color name="border">#2B3550</color>
+    <color name="border_cool">#2B3550</color>
+
+    <color name="blue">#4C93FF</color>
+    <color name="cyan">#3ED7FA</color>
+    <color name="violet">#9B7BFF</color>
+    <color name="lavender">#2A2545</color>
+
+    <color name="success">#35C79A</color>
+    <color name="warning">#E0A03C</color>
+    <color name="danger">#F0637A</color>
+
+    <color name="shadow_tint">#000000</color>
+
+    <color name="grad_start">#3ED7FA</color>
+    <color name="grad_mid">#4C93FF</color>
+    <color name="grad_end">#9B7BFF</color>
+
+    <color name="scrim">#B3000000</color>
+    <color name="crown_fill">#2E2A1E</color>
+    <color name="crown_border">#4A4028</color>
+</resources>

@@ -34,4 +34,6 @@
 
     <!-- Scrim behind labels that sit on top of thumbnails. -->
     <color name="scrim">#8C0A0F1F</color>
+    <color name="crown_fill">#FFF8E8</color>
+    <color name="crown_border">#F4E4BD</color>
 </resources>

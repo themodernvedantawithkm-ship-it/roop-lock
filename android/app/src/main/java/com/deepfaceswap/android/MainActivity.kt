@@ -74,6 +74,8 @@ class MainActivity : Activity() {
     private var qualityIndex = 1
     private var restoreOn = true
     private var swapperFile = ModelManager.INSWAPPER_FILE
+    /** True while the four preview frames are being produced. */
+    private var previewBusy = false
 
     // Video job
     private val vSources = mutableListOf<File>()
@@ -815,6 +817,11 @@ class MainActivity : Activity() {
         })
         vidTiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         col.addView(RoopUi.hScroll(this, vidTiles))
+
+        // Preview first, so a wrong-looking clip costs seconds instead of a full render.
+        val previewCta = RoopUi.secondaryButton(this, "Preview 4 frames", R.drawable.ic_image)
+        previewCta.setOnClickListener { runPreview() }
+        col.addView(previewCta)
 
         vidCta = RoopUi.primaryButton(this, "Generate Video", R.drawable.ic_play)
         vidCta.setOnClickListener { runVideo() }
@@ -2087,6 +2094,79 @@ class MainActivity : Activity() {
                 if (result == null) toast("Face detection failed")
             }
         }.start()
+    }
+
+    /**
+     * Swap four frames from across the clip and show them, without touching the
+     * video pipeline or starting a render.
+     */
+    private fun runPreview() {
+        val target = targetFile ?: return
+        if (!isVideo(target.name)) {
+            toast("Preview is for video. Pick a clip on this screen.")
+            return
+        }
+        if (sourceFiles.isEmpty()) {
+            toast("Choose a source face first")
+            return
+        }
+        val grid = qualityGrid()
+        val strength = if (restoreOn) prefs.restoreStrength else 1f
+        val sources = sourceFiles.map { it.absolutePath }
+        previewBusy = true
+        vidStatus.text = "Previewing \u2026"
+        Thread({
+            val frames = VideoPreview.build(
+                this, target, sources, swapperFile, grid, strength,
+            ) { message -> io.post { vidStatus.text = message } }
+            io.post {
+                previewBusy = false
+                if (frames.isEmpty()) {
+                    vidStatus.text = "Could not read frames from that clip."
+                    toast("No frames could be read")
+                } else {
+                    vidStatus.text = "Preview ready \u2014 ${frames.size} frames"
+                    showPreviewSheet(frames)
+                }
+            }
+        }, "roop-preview").start()
+    }
+
+    /** The preview frames, with the option to commit to the whole clip. */
+    private fun showPreviewSheet(frames: List<File>) {
+        val strip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        frames.forEach { file ->
+            strip.addView(android.widget.ImageView(this).apply {
+                setImageBitmap(android.graphics.BitmapFactory.decodeFile(file.absolutePath))
+                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                layoutParams = LinearLayout.LayoutParams(dp(96), dp(150)).apply {
+                    marginEnd = dp(6)
+                }
+            })
+        }
+        val scroller = android.widget.HorizontalScrollView(this).apply { addView(strip) }
+
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(4))
+            addView(scroller)
+            addView(TextView(this@MainActivity).apply {
+                text = "Sampled across the clip. If the faces look right here, the full render will."
+                textSize = 12.5f
+                setTextColor(getColor(R.color.ink_secondary))
+                setPadding(0, dp(10), 0, 0)
+            })
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Preview")
+            .setView(wrap)
+            .setPositiveButton("Render the clip") { _, _ -> runVideo() }
+            .setNegativeButton("Not yet") { _, _ -> }
+            .show()
     }
 
     private fun runSwap() {
