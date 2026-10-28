@@ -592,16 +592,40 @@ pub fn swap_faces_reporting(
     let mut detector = FaceDetector::new(detector_model)?;
     let mut recognizer = FaceRecognizer::new(recognizer_model)?;
     let mut swapper = FaceSwapper::new(swapper_model)?;
-    let mut enhancer = enhancer_model
-        .map(|path| FaceEnhancer::new(path))
-        .transpose()?;
+    // A restore model that will not load must not take the swap with it. This
+    // used to be `.transpose()?`, so a corrupt or unsupported enhancer aborted
+    // the whole job before a single face was touched - the app reported "swap
+    // stopped" while the swap itself was fine. The enhancer is optional by
+    // definition: without it the output is simply not restored.
+    let mut enhancer = enhancer_model.and_then(|path| match FaceEnhancer::new(path) {
+        Ok(e) => Some(e),
+        Err(err) => {
+            log_additional!(
+                "load_models",
+                "Restore model could not be loaded, continuing without it: {err}"
+            );
+            None
+        }
+    });
+    // Keep-lips needs the landmark model, but a missing one should cost the
+    // option, not the swap.
     let mut landmark_detector = if opts.use_mouth_mask {
-        let path = landmark_model.ok_or_else(|| {
-            FaceSwapError::InvalidInput(
-                "Landmark model path required when mouth mask is enabled".to_string(),
-            )
-        })?;
-        Some(LandmarkDetector::new(path)?)
+        match landmark_model {
+            Some(path) => match LandmarkDetector::new(path) {
+                Ok(d) => Some(d),
+                Err(err) => {
+                    log_additional!(
+                        "load_models",
+                        "Landmark model could not be loaded, keep-lips disabled: {err}"
+                    );
+                    None
+                }
+            },
+            None => {
+                log_additional!("load_models", "Keep-lips needs the landmark model; skipping");
+                None
+            }
+        }
     } else {
         None
     };
@@ -707,14 +731,32 @@ pub fn swap_video(
 
     let mut enhancer = if let Some(path) = enhancer_path {
         log_additional!("load_models", "Loading enhancement model");
-        Some(FaceEnhancer::new(path)?)
+        match FaceEnhancer::new(path) {
+            Ok(e) => Some(e),
+            Err(err) => {
+                log_additional!(
+                    "load_models",
+                    "Restore model could not be loaded, continuing without it: {err}"
+                );
+                None
+            }
+        }
     } else {
         None
     };
 
     let mut landmark_detector = if let Some(path) = landmark_path {
         log_additional!("load_models", "Loading landmark model");
-        Some(LandmarkDetector::new(path)?)
+        match LandmarkDetector::new(path) {
+            Ok(d) => Some(d),
+            Err(err) => {
+                log_additional!(
+                    "load_models",
+                    "Landmark model could not be loaded, keep-lips disabled: {err}"
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -1266,16 +1308,40 @@ pub fn swap_faces_mapped(
     let mut detector = FaceDetector::new(detector_model)?;
     let mut recognizer = FaceRecognizer::new(recognizer_model)?;
     let mut swapper = FaceSwapper::new(swapper_model)?;
-    let mut enhancer = enhancer_model
-        .map(|path| FaceEnhancer::new(path))
-        .transpose()?;
+    // A restore model that will not load must not take the swap with it. This
+    // used to be `.transpose()?`, so a corrupt or unsupported enhancer aborted
+    // the whole job before a single face was touched - the app reported "swap
+    // stopped" while the swap itself was fine. The enhancer is optional by
+    // definition: without it the output is simply not restored.
+    let mut enhancer = enhancer_model.and_then(|path| match FaceEnhancer::new(path) {
+        Ok(e) => Some(e),
+        Err(err) => {
+            log_additional!(
+                "load_models",
+                "Restore model could not be loaded, continuing without it: {err}"
+            );
+            None
+        }
+    });
+    // Keep-lips needs the landmark model, but a missing one should cost the
+    // option, not the swap.
     let mut landmark_detector = if opts.use_mouth_mask {
-        let path = landmark_model.ok_or_else(|| {
-            FaceSwapError::InvalidInput(
-                "Landmark model path required when mouth mask is enabled".to_string(),
-            )
-        })?;
-        Some(LandmarkDetector::new(path)?)
+        match landmark_model {
+            Some(path) => match LandmarkDetector::new(path) {
+                Ok(d) => Some(d),
+                Err(err) => {
+                    log_additional!(
+                        "load_models",
+                        "Landmark model could not be loaded, keep-lips disabled: {err}"
+                    );
+                    None
+                }
+            },
+            None => {
+                log_additional!("load_models", "Keep-lips needs the landmark model; skipping");
+                None
+            }
+        }
     } else {
         None
     };
@@ -1473,16 +1539,40 @@ pub fn swap_animation(
     let mut detector = FaceDetector::new(detector_model)?;
     let mut recognizer = FaceRecognizer::new(recognizer_model)?;
     let mut swapper = FaceSwapper::new(swapper_model)?;
-    let mut enhancer = enhancer_model
-        .map(|path| FaceEnhancer::new(path))
-        .transpose()?;
+    // A restore model that will not load must not take the swap with it. This
+    // used to be `.transpose()?`, so a corrupt or unsupported enhancer aborted
+    // the whole job before a single face was touched - the app reported "swap
+    // stopped" while the swap itself was fine. The enhancer is optional by
+    // definition: without it the output is simply not restored.
+    let mut enhancer = enhancer_model.and_then(|path| match FaceEnhancer::new(path) {
+        Ok(e) => Some(e),
+        Err(err) => {
+            log_additional!(
+                "load_models",
+                "Restore model could not be loaded, continuing without it: {err}"
+            );
+            None
+        }
+    });
+    // Keep-lips needs the landmark model, but a missing one should cost the
+    // option, not the swap.
     let mut landmark_detector = if opts.use_mouth_mask {
-        let path = landmark_model.ok_or_else(|| {
-            FaceSwapError::InvalidInput(
-                "Landmark model path required when mouth mask is enabled".to_string(),
-            )
-        })?;
-        Some(LandmarkDetector::new(path)?)
+        match landmark_model {
+            Some(path) => match LandmarkDetector::new(path) {
+                Ok(d) => Some(d),
+                Err(err) => {
+                    log_additional!(
+                        "load_models",
+                        "Landmark model could not be loaded, keep-lips disabled: {err}"
+                    );
+                    None
+                }
+            },
+            None => {
+                log_additional!("load_models", "Keep-lips needs the landmark model; skipping");
+                None
+            }
+        }
     } else {
         None
     };
@@ -1662,12 +1752,22 @@ impl SwapSession {
             .map(|path| FaceEnhancer::new(path))
             .transpose()?;
         let landmark_detector = if use_mouth_mask {
-            let path = landmark_model.ok_or_else(|| {
-                FaceSwapError::InvalidInput(
-                    "Landmark model path required when mouth mask is enabled".to_string(),
-                )
-            })?;
-            Some(LandmarkDetector::new(path)?)
+            match landmark_model {
+                Some(path) => match LandmarkDetector::new(path) {
+                    Ok(d) => Some(d),
+                    Err(err) => {
+                        log_additional!(
+                            "load_models",
+                            "Landmark model could not be loaded, keep-lips disabled: {err}"
+                        );
+                        None
+                    }
+                },
+                None => {
+                    log_additional!("load_models", "Keep-lips needs the landmark model; skipping");
+                    None
+                }
+            }
         } else {
             None
         };

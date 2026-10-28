@@ -76,6 +76,8 @@ class MainActivity : Activity() {
     private var swapperFile = ModelManager.INSWAPPER_FILE
     /** True while the four preview frames are being produced. */
     private var previewBusy = false
+    /** The most recent job failure, shown in Diagnostics. */
+    private var lastJobError: String? = null
 
     // Video job
     private val vSources = mutableListOf<File>()
@@ -1569,6 +1571,37 @@ class MainActivity : Activity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 18)
             })
 
+        // --- Diagnostics
+        val diagCard = RoopUi.card(this)
+        diagCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_scan, "Diagnostics",
+            "What the app can see right now: memory, and every model on disk",
+        ))
+        val reportLines = Diagnostics.report(this, models, lastJobError)
+        diagCard.addView(android.widget.TextView(this).apply {
+            text = Diagnostics.asText(reportLines)
+            textSize = 11.5f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(getColor(R.color.ink_secondary))
+            setTextIsSelectable(true)
+            setPadding(0, dp(4), 0, dp(10))
+        })
+        val copyRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        copyRow.addView(RoopUi.secondaryButton(this, "Copy report", R.drawable.ic_chip).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f)
+            setOnClickListener {
+                val clip = getSystemService(android.content.ClipboardManager::class.java)
+                clip?.setPrimaryClip(
+                    android.content.ClipData.newPlainText(
+                        "Roop diagnostics", Diagnostics.asText(reportLines),
+                    ),
+                )
+                toast("Report copied")
+            }
+        })
+        diagCard.addView(copyRow)
+        col.addView(diagCard)
+
         // --- AI models
         val modelCard = RoopUi.card(this)
         modelCard.addView(RoopUi.sectionHeader(
@@ -2445,6 +2478,7 @@ class MainActivity : Activity() {
                 setSwapBusy(false, "")
                 setVideoBusy(false, "")
                 val message = state.error ?: "The swap could not be completed."
+                lastJobError = message
                 swapStatus.text = message
                 vidStatus.text = message
                 toast("Swap failed")
