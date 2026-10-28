@@ -92,12 +92,6 @@ class SwapService : Service() {
         NativeBridge.setColorMatch(job.colorMatch)
         NativeBridge.setFaceBlend(job.faceBlend)
         TraceLog.add(
-            "image",
-            "start ${File(job.targetPath).name} swapper=${job.swapperFile} " +
-                "boost=${job.pixelBoost} lips=${job.keepLips} blend=${job.faceBlend} " +
-                "restore=${job.enhancerStrength}",
-        )
-        TraceLog.add(
             "video",
             "start ${File(job.inputPath).name} clones=${job.clones} boost=${job.pixelBoost} " +
                 "swapper=${job.swapperFile} lips=${job.keepLips} blend=${job.faceBlend}",
@@ -155,11 +149,6 @@ class SwapService : Service() {
             "start ${File(job.targetPath).name} swapper=${job.swapperFile} " +
                 "boost=${job.pixelBoost} lips=${job.keepLips} blend=${job.faceBlend} " +
                 "restore=${job.enhancerStrength}",
-        )
-        TraceLog.add(
-            "video",
-            "start ${File(job.inputPath).name} clones=${job.clones} boost=${job.pixelBoost} " +
-                "swapper=${job.swapperFile} lips=${job.keepLips} blend=${job.faceBlend}",
         )
 
         // Keep the whole result. Only `.ok` used to be read, so the engine's own

@@ -3111,7 +3111,7 @@ class MainActivity : Activity() {
         sb.append("  \u00B7  ").append(duration(elapsed)).append(" so far")
         if (fraction > 0.02f) {
             val total = elapsed / fraction
-            val left = (total - elapsed).coerceAtLeast(0.0).toLong()
+            val left = (total - elapsed).coerceAtLeast(0f).toLong()
             sb.append("  \u00B7  about ").append(duration(left)).append(" left")
         }
         return sb.toString()
