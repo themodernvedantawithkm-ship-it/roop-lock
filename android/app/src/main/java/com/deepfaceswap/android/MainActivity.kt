@@ -148,8 +148,16 @@ class MainActivity : Activity() {
         models.ensureDirs()
         models.copyEmapFromAssetsIfPresent()
 
-        setContentView(buildShell())
+        val shell = buildShell()
+        setContentView(shell)
         SwapBus.addListener(swapListener)
+
+        // The PIN gate goes on top of the finished shell, so unlocking reveals a
+        // ready app rather than starting the activity a second time.
+        val gate = LockScreen.build(this, prefs) { overlay ->
+            (overlay.parent as? android.view.ViewGroup)?.removeView(overlay)
+        }
+        (shell as? android.view.ViewGroup)?.addView(gate)
 
         screens["swap"] = buildSwapScreen().also { content.addView(it) }
         screens["video"] = buildVideoScreen().also { content.addView(it) }

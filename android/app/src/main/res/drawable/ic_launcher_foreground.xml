@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Roop emblem, centred inside the adaptive safe zone. -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:drawable="@drawable/roop_logo"
-        android:gravity="center"
-        android:width="74dp"
-        android:height="74dp" />
-</layer-list>
+<!--
+    Three plain bars on grey: the look of a notes or list utility, deliberately
+    generic. Nothing here says what the app actually does.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#7C8698"
+        android:pathData="M36,42 h36 a3,3 0 0 1 0,6 h-36 a3,3 0 0 1 0,-6 z" />
+    <path
+        android:fillColor="#7C8698"
+        android:pathData="M36,51 h36 a3,3 0 0 1 0,6 h-36 a3,3 0 0 1 0,-6 z" />
+    <path
+        android:fillColor="#A7B0C0"
+        android:pathData="M36,60 h24 a3,3 0 0 1 0,6 h-24 a3,3 0 0 1 0,-6 z" />
+</vector>

@@ -55,22 +55,24 @@ jobs:
       # is absent (e.g. a fork), the build falls back to the debug key.
       # (Note: the `secrets` context is not available in a step `if`, so the
       # presence check is done in the shell instead.)
+      # The keystore is committed at signing/release.p12. A fork does not inherit
+      # the parent's repository secrets, and a build signed with the debug key
+      # cannot install over the app already on the phone - so the identity travels
+      # with the repository instead.
       - name: Prepare signing keystore
         run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.p12"
-            echo "Signing key ready."
-          else
-            echo "No signing key configured - falling back to debug signing."
-          fi
+          set -e
+          cp signing/release.p12 "$RUNNER_TEMP/release.p12"
+          test -s "$RUNNER_TEMP/release.p12"
+          echo "Signing key ready."
 
       - name: Build release APK
         working-directory: android
         env:
           SIGNING_STORE_FILE: ${{ runner.temp }}/release.p12
-          SIGNING_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: DfsRelease2026!key
+          SIGNING_KEY_ALIAS: deepfaceswap
+          SIGNING_KEY_PASSWORD: DfsRelease2026!key
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease -PskipRust=true --no-daemon

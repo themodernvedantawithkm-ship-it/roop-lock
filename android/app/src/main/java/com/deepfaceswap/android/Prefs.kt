@@ -12,6 +12,15 @@ class Prefs(context: Context) {
 
     private val sp = context.getSharedPreferences("roop_settings", Context.MODE_PRIVATE)
 
+    /**
+     * Salted SHA-256 of the four-digit lock PIN, or "" when no lock is set.
+     *
+     * The PIN itself is never written anywhere - see [LockScreen.hash].
+     */
+    var pinHash: String
+        get() = sp.getString("pin_hash", "") ?: ""
+        set(v) = sp.edit().putString("pin_hash", v).apply()
+
     /** One of [QUALITY_ORDER]. */
     var quality: String
         get() = sp.getString("quality", "Balanced") ?: "Balanced"
