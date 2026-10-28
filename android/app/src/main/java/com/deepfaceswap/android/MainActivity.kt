@@ -226,16 +226,31 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        brandTop.addView(RoopUi.wordmark(this@MainActivity))
+        brandTop.addView(RoopUi.wordmark(this@MainActivity).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        // The pill used to stretch to the full height of the header: its lock
+        // drawable reported a large intrinsic size and the TextView grew to fit
+        // it. Fixed height, fixed drawable bounds and centre gravity keep it a
+        // pill instead of a slab.
         brandTop.addView(RoopUi.pill(
             this@MainActivity, getString(R.string.private_label),
             R.drawable.bg_pill_lavender, R.color.violet,
         ).apply {
-            layoutParams = RoopUi.margin(this@MainActivity, ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 8, 0, 0, 0)
-            setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_lock, 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(24),
+            ).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                marginStart = dp(8)
+            }
+            gravity = Gravity.CENTER_VERTICAL
+            includeFontPadding = false
+            val lock = getDrawable(R.drawable.ic_lock)
+            lock?.setBounds(0, 0, dp(11), dp(11))
+            setCompoundDrawables(lock, null, null, null)
             compoundDrawablePadding = dp(4)
-            setPadding(dp(8), dp(4), dp(9), dp(4))
+            setPadding(dp(8), 0, dp(9), 0)
         })
         brand.addView(brandTop)
         brand.addView(RoopUi.meta(this, getString(R.string.tagline)).apply {
@@ -2076,6 +2091,28 @@ class MainActivity : Activity() {
 
     private fun runSwap() {
         val target = targetFile ?: return
+
+        // Name the missing file instead of failing inside the engine.
+        //
+        // Models live in context.filesDir - internal, app-private storage - so an
+        // uninstall or a "Clear data" removes them, and nothing in the old code
+        // checked before handing the job to the service. The result was a job that
+        // appeared to start and produced nothing, with no explanation anywhere.
+        val swapperPath = File(models.modelsDir, swapperFile)
+        if (!swapperPath.isFile || swapperPath.length() < 1_000_000L) {
+            val msg = "Missing the swapper model ($swapperFile). Open Models and download it."
+            swapStatus.text = msg
+            toast(msg)
+            return
+        }
+        val detectorPath = File(models.buffaloDir, "det_10g.onnx")
+        if (!detectorPath.isFile || detectorPath.length() < 1_000_000L) {
+            val msg = "Missing the face detector (det_10g). Open Models and download the buffalo_l set."
+            swapStatus.text = msg
+            toast(msg)
+            return
+        }
+
         val manual = faceMode == 2
         if (manual && mappings.isEmpty()) {
             toast("Pair at least one source and target face")
