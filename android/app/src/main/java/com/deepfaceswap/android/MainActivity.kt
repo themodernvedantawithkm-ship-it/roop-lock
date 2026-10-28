@@ -2385,6 +2385,8 @@ class MainActivity : Activity() {
             enhancerStrength = strength,
             keepAudio = !vMute,
             colorMatch = prefs.colorMatch,
+            keepLips = prefs.keepLips,
+            faceBlend = prefs.faceBlend,
             clones = prefs.clones,
             originalPath = target.absolutePath,
             modelLabel = label,
