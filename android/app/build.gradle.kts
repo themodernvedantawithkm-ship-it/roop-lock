@@ -13,8 +13,8 @@ android {
         applicationId = "com.deepfaceswap.android"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "1.8.6"
+        versionCode = 29
+        versionName = "1.8.7"
 
         // The `ort` crate ships a prebuilt ONNX Runtime only for 64-bit ARM
         // Android, so we target arm64-v8a exclusively.
@@ -35,6 +35,14 @@ android {
                 storePassword = System.getenv("SIGNING_STORE_PASSWORD")
                 keyAlias = System.getenv("SIGNING_KEY_ALIAS")
                 keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                // Sign with every scheme, not just v2. A v2-only APK is valid on
+                // Android 7+, but some OEM installers - ColorOS among them - are
+                // stricter and report a signature conflict that is really a
+                // missing v1/v3 signature.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
             }
         }
     }
