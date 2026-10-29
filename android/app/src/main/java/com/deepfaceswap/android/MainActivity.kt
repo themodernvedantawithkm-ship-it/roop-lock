@@ -87,6 +87,9 @@ class MainActivity : Activity() {
     /** The saved person currently chosen as the source, if any. */
     private var selectedPerson: PeopleStore.Person? = null
     private lateinit var peopleRow: LinearLayout
+    /** Target face index -> saved person id, for group casting. */
+    private val castMap = mutableMapOf<Int, String>()
+    private lateinit var castCard: LinearLayout
     /** Proportion adjustment derived from the last measurement, 1.0 = none. */
     private var shapeSx = 1f
     private var shapeSy = 1f
@@ -598,6 +601,9 @@ class MainActivity : Activity() {
         )
         col.addView(swapTarget.card)
 
+        castCard = RoopUi.card(this).apply { visibility = View.GONE }
+        col.addView(castCard)
+
         mappingCard = RoopUi.card(this).apply { visibility = View.GONE }
         mappingCard.addView(RoopUi.sectionHeader(
             this, R.drawable.ic_person, "Face Mapping", "Choose which face goes where",
@@ -669,6 +675,7 @@ class MainActivity : Activity() {
 
     private fun refreshSwap() {
         runCatching { refreshPeopleRow() }
+        runCatching { refreshCastCard() }
         runCatching { refreshGeometry() }
         renderUpload(swapSource, sourceFiles.firstOrNull(), R.drawable.ic_person,
             "Tap to upload source face", "JPG \u00B7 PNG \u00B7 WebP",
@@ -1770,6 +1777,81 @@ class MainActivity : Activity() {
         return col
     }
 
+    /**
+     * The casting sheet: one row per face found in the target, each with a saved
+     * person to put on it.
+     *
+     * This is what a group photo actually needs. "All faces" applies one person
+     * everywhere and "manual" asks you to pick indices without seeing them; a
+     * casting sheet lets you leave people alone, which is the normal case when
+     * three of five faces should change.
+     */
+    private fun refreshCastCard() {
+        castCard.removeAllViews()
+        val detected = faces
+        val target = targetFile
+        if (detected == null || target == null || detected.target.isEmpty()) {
+            castCard.visibility = View.GONE
+            return
+        }
+        val list = people.all().filter { it.hasMeanFace }
+        if (list.isEmpty()) {
+            castCard.visibility = View.GONE
+            return
+        }
+        castCard.visibility = View.VISIBLE
+        castCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_person, "Cast",
+            "Choose who goes on each face \u2014 leave the rest alone",
+        ))
+
+        detected.target.forEachIndexed { i, face ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            row.addView(RoopUi.text(this, "Face ${i + 1}", 14f, R.color.ink, 1),
+                RoopUi.weight(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val chosen = castMap[i]?.let { id -> list.firstOrNull { it.id == id } }
+            row.addView(RoopUi.optionTile(
+                this, R.drawable.ic_person, chosen?.name ?: "Skip",
+                if (chosen == null) "leave this face" else "assigned",
+            ).apply {
+                setOnClickListener {
+                    val names = listOf("Skip") + list.map { it.name }
+                    val current = if (chosen == null) 0 else list.indexOf(chosen) + 1
+                    showSheet(
+                        "Face ${i + 1}",
+                        names,
+                        current,
+                        listOf("Leave this face as it is.") + list.map {
+                            "Put ${it.name} on this face (${it.quality})."
+                        },
+                    ) { pick ->
+                        if (pick == 0) castMap.remove(i)
+                        else castMap[i] = list[pick - 1].id
+                        geometryKey = ""
+                        refreshSwap()
+                    }
+                }
+            })
+            castCard.addView(row)
+        }
+
+        if (castMap.isNotEmpty()) {
+            castCard.addView(RoopUi.secondaryButton(this, "Clear cast", null).apply {
+                setOnClickListener {
+                    castMap.clear()
+                    refreshSwap()
+                }
+            })
+        }
+        castCard.addView(RoopUi.meta(this,
+            "Assigning here replaces the source picker for this job: each assigned face " +
+                "gets that person's averaged identity."))
+    }
+
     private fun promptRename(person: PeopleStore.Person) {
         val dialog = Dialog(this)
         val box = LinearLayout(this).apply {
@@ -2817,7 +2899,31 @@ class MainActivity : Activity() {
             return
         }
 
-        val manual = faceMode == 2
+        // A cast assignment overrides the ordinary source selection: each face
+        // in the photo gets its own person, so the sources become those people's
+        // averaged faces and the mapping says which goes where.
+        var manual = faceMode == 2
+        if (castMap.isNotEmpty()) {
+            val castPeople = castMap.values.distinct().mapNotNull { id ->
+                people.all().firstOrNull { it.id == id }
+            }.filter { it.hasMeanFace && File(it.meanFacePath).isFile }
+            if (castPeople.isNotEmpty()) {
+                sourceFiles.clear()
+                castPeople.forEach { sourceFiles.add(File(it.meanFacePath)) }
+                mappings.clear()
+                castMap.forEach { (targetIdx, personId) ->
+                    val sourceIdx = castPeople.indexOfFirst { it.id == personId }
+                    if (sourceIdx >= 0) mappings.add(sourceIdx to targetIdx)
+                }
+                manual = true
+                TraceLog.add(
+                    "cast",
+                    "${mappings.size} face(s) assigned across ${castPeople.size} people",
+                )
+            } else {
+                TraceLog.add("cast", "assignments pointed at people with no averaged face")
+            }
+        }
         if (manual && mappings.isEmpty()) {
             toast("Pair at least one source and target face")
             return
@@ -3419,6 +3525,7 @@ class MainActivity : Activity() {
             }
             REQ_TARGET -> {
                 targetFile = picked.first(); faces = null; mappings.clear()
+                castMap.clear()
             }
             REQ_VSOURCE -> { vSources.clear(); vSources.addAll(picked) }
             REQ_VTARGET -> { vTarget = picked.first() }
