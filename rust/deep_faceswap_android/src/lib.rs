@@ -10,7 +10,7 @@
 //! ```
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jbyteArray, jfloat, jint, jstring};
+use jni::sys::{jboolean, jbyteArray, jfloat, jfloatArray, jint, jstring};
 use jni::JNIEnv;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};

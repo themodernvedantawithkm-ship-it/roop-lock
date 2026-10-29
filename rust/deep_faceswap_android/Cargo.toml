@@ -16,6 +16,7 @@ deep_faceswap_core = { path = "../deep_faceswap_core", default-features = false 
 
 jni = "0.21"
 ndarray.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
