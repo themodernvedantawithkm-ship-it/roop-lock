@@ -89,7 +89,13 @@ object NativeBridge {
     private external fun faceProgress(): Int
 
     /** One detected face, as returned for the manual mapping UI. */
-    data class FaceOption(val index: Int, val score: Float, val cropPath: String)
+    data class FaceOption(
+        val index: Int,
+        val score: Float,
+        val cropPath: String,
+        /** Box in the original image: left, top, right, bottom. */
+        val box: android.graphics.RectF,
+    )
 
     /** Faces found in the source image(s) and in the target. */
     data class FaceOptions(val source: List<FaceOption>, val target: List<FaceOption>)
@@ -214,10 +220,20 @@ object NativeBridge {
         if (arr == null) return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+            val arr = obj.optJSONArray("bbox")
+            val box = if (arr != null && arr.length() == 4) {
+                android.graphics.RectF(
+                    arr.optDouble(0).toFloat(), arr.optDouble(1).toFloat(),
+                    arr.optDouble(2).toFloat(), arr.optDouble(3).toFloat(),
+                )
+            } else {
+                android.graphics.RectF()
+            }
             FaceOption(
                 index = obj.optInt("index", i),
                 score = obj.optDouble("score", 0.0).toFloat(),
                 cropPath = obj.optString("crop", ""),
+                box = box,
             )
         }
     }
@@ -314,6 +330,13 @@ object NativeBridge {
     private external fun setColorMatchNative(enabled: Boolean)
 
     private external fun setFaceBlendNative(blend: Float)
+
+    private external fun identityScoreNative(
+        sourcePath: String,
+        resultPath: String,
+        detector: String,
+        recognizer: String,
+    ): Float
 
     private external fun sessionSwapFrameRawWorker(
         worker: Int,
@@ -489,6 +512,25 @@ object NativeBridge {
     /** 0.0 the untouched face .. 1.0 the swap in full. */
     fun setFaceBlend(blend: Float) {
         runCatching { setFaceBlendNative(blend.coerceIn(0f, 1f)) }
+    }
+
+    /**
+     * How close the face in [resultPath] is to the face in [sourcePath], as a
+     * cosine similarity. Null when it cannot be measured.
+     *
+     * Read-only and fail-safe: it runs after the job, and any problem simply
+     * means no number rather than a failed swap.
+     */
+    fun identityScore(
+        context: Context,
+        sourcePath: String,
+        resultPath: String,
+    ): Float? {
+        val models = ModelManager(context)
+        val value = runCatching {
+            identityScoreNative(sourcePath, resultPath, models.detectorPath, models.recognizerPath)
+        }.getOrNull() ?: return null
+        return if (value < -0.5f || value.isNaN()) null else value
     }
 
     /** Release the session and free its models. Safe to call when none is open. */

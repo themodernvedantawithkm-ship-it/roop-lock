@@ -809,6 +809,29 @@ class MainActivity : Activity() {
         mappingBody.addView(detect)
 
         if (detected == null) return
+        // The photo with the detected boxes drawn on it. The thumbnails below
+        // still work, but on a group shot you need to see where the faces are.
+        val targetForOverlay = targetFile
+        val targetFaces = detected.target
+        if (targetForOverlay != null && targetFaces.isNotEmpty()) {
+            FaceOverlayView.of(this, targetForOverlay, targetFaces.map { it.box })?.let { view ->
+                view.selected = mappings.lastOrNull()?.second ?: -1
+                view.onPick = { pick ->
+                    val source = mappings.lastOrNull()?.first ?: 0
+                    mappings.removeAll { it.second == pick }
+                    mappings.add(source to pick)
+                    TraceLog.add("faces", "target face ${pick + 1} selected")
+                    refreshSwap()
+                }
+                mappingBody.addView(view, RoopUi.margin(
+                    this@MainActivity, ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 0, 8, 0, 6,
+                ))
+                mappingBody.addView(RoopUi.meta(this@MainActivity,
+                    "Tap a box to swap onto that face. Numbers match the thumbnails below."))
+            }
+        }
+
         mappingBody.addView(RoopUi.meta(this, "Source faces \u2014 tap to select the active one"))
         mappingBody.addView(faceStrip(detected.source, isSource = true))
         mappingBody.addView(RoopUi.meta(this, "Target faces \u2014 tap to pair with the active source"))
@@ -2817,11 +2840,42 @@ class MainActivity : Activity() {
         runCatching { ExifStrip.strip(file) }
     }
 
+    /**
+     * Measure how far the face actually moved, and say so.
+     *
+     * Runs on a worker thread after the job, because it loads the detector and
+     * recogniser again. Failure is silent: no number is better than a wrong one.
+     */
+    private fun showIdentityScore(file: File, source: File?, host: String) {
+        if (source == null || isVideo(file.name) || isAnimation(file.name)) return
+        Thread({
+            val score = NativeBridge.identityScore(this, source.absolutePath, file.absolutePath)
+            io.post {
+                if (score == null) {
+                    TraceLog.add("identity", "could not be measured for ${file.name}")
+                    return@post
+                }
+                TraceLog.add("identity", "%.3f".format(score))
+                val verdict = when {
+                    score >= 0.60f -> "clearly the same person"
+                    score >= 0.45f -> "recognisably the same person"
+                    score >= 0.30f -> "loosely similar"
+                    else -> "not reading as the same person"
+                }
+                val line = RoopUi.meta(this@MainActivity,
+                    "Identity  ${"%.2f".format(score)}  \u2014  $verdict")
+                val hostView = if (host == "video") vidResult else swapResult
+                (hostView.getChildAt(0) as? android.view.ViewGroup)?.addView(line)
+            }
+        }, "roop-identity").start()
+    }
+
     private fun showResultCardFor(file: File, host: String) {
         cleanMetadata(file)
         val hostView = if (host == "video") vidResult else swapResult
         hostView.removeAllViews()
         hostView.addView(resultCard(file, host))
+        showIdentityScore(file, sourceFiles.firstOrNull(), host)
     }
 
     private fun resultCard(file: File, host: String): View {

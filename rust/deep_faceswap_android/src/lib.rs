@@ -893,3 +893,92 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionClose(
     };
     to_jstring(&mut env, payload)
 }
+
+/// Cosine similarity between the face in `source_path` and the face in
+/// `result_path`. Returns -1.0 when it cannot be computed.
+///
+/// Why this exists: a swap can run, write a file, and change almost nothing -
+/// which reads as "the swap did not happen" with no way to tell whether the
+/// identity moved or the pixels merely shifted. One number answers that.
+///
+/// It is deliberately **read-only and fail-safe**. It runs after the job has
+/// finished, opens its own detectors, and returns -1.0 on any problem, so a
+/// fault here can never affect a swap that already succeeded.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_identityScoreNative(
+    mut env: JNIEnv,
+    _class: JClass,
+    source_path: JString,
+    result_path: JString,
+    detector: JString,
+    recognizer: JString,
+) -> jfloat {
+    let source = jstring_to_string(&mut env, &source_path);
+    let result = jstring_to_string(&mut env, &result_path);
+    let det_path = jstring_to_string(&mut env, &detector);
+    let rec_path = jstring_to_string(&mut env, &recognizer);
+
+    let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Option<f32> {
+        use deep_faceswap_core::alignment::align_face;
+        use deep_faceswap_core::detection::FaceDetector;
+        use deep_faceswap_core::recognition::FaceRecognizer;
+        use deep_faceswap_core::utils::image::{load_image, to_rgb8};
+
+        fn embed(
+            path: &str,
+            det_path: &str,
+            rec_path: &str,
+        ) -> Option<Vec<f32>> {
+            use deep_faceswap_core::alignment::align_face;
+            use deep_faceswap_core::detection::FaceDetector;
+            use deep_faceswap_core::recognition::FaceRecognizer;
+            use deep_faceswap_core::utils::image::{load_image, to_rgb8};
+
+            let img = load_image(path).ok()?;
+            let rgb = to_rgb8(&img);
+            let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+            if w == 0 || h == 0 {
+                return None;
+            }
+            let mut arr = Array3::<u8>::zeros((h, w, 3));
+            for y in 0..h {
+                for x in 0..w {
+                    let px = rgb.get_pixel(x as u32, y as u32);
+                    arr[[y, x, 0]] = px[0];
+                    arr[[y, x, 1]] = px[1];
+                    arr[[y, x, 2]] = px[2];
+                }
+            }
+            let mut det = FaceDetector::new(det_path).ok()?;
+            let faces = det.detect(&arr, 0.5, 0.4).ok()?;
+            // Largest by area, not highest score: on a swapped result the
+            // subject is usually the biggest face, and a small bystander can
+            // easily outscore it.
+            let face = faces.into_iter().max_by(|a, b| {
+                let aa = (a.bbox.x2 - a.bbox.x1) * (a.bbox.y2 - a.bbox.y1);
+                let bb = (b.bbox.x2 - b.bbox.x1) * (b.bbox.y2 - b.bbox.y1);
+                aa.partial_cmp(&bb).unwrap_or(std::cmp::Ordering::Equal)
+            })?;
+            let aligned = align_face(&arr, &face, 112).ok()?;
+            let mut rec = FaceRecognizer::new(rec_path).ok()?;
+            rec.extract_embedding(&aligned.aligned_image).ok()
+        }
+
+        let a = embed(&source, &det_path, &rec_path)?;
+        let b = embed(&result, &det_path, &rec_path)?;
+        if a.len() != b.len() || a.is_empty() {
+            return None;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if na <= 0.0 || nb <= 0.0 {
+            return None;
+        }
+        Some(dot / (na * nb))
+    }))
+    .ok()
+    .flatten();
+
+    computed.unwrap_or(-1.0)
+}
