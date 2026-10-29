@@ -79,6 +79,10 @@ class MainActivity : Activity() {
     /** The most recent job failure, shown in Diagnostics. */
     private var lastJobError: String? = null
     internal lateinit var swapCancel: View
+    private lateinit var geometryCard: LinearLayout
+    private var geometryBusy = false
+    /** The source|target pair currently measured, so it is not redone. */
+    private var geometryKey = ""
     internal lateinit var vidCancel: View
     private var pendingPhoneUnlock: ((android.view.View) -> Unit)? = null
     private var pendingGate: View? = null
@@ -592,6 +596,10 @@ class MainActivity : Activity() {
         swapTiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         col.addView(RoopUi.hScroll(this, swapTiles))
 
+        // The measurements, before anything is rendered.
+        geometryCard = RoopUi.card(this).apply { visibility = View.GONE }
+        col.addView(geometryCard)
+
         swapCancel = RoopUi.secondaryButton(this, "Cancel", null).apply {
             visibility = View.GONE
             setOnClickListener {
@@ -638,6 +646,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshSwap() {
+        runCatching { refreshGeometry() }
         renderUpload(swapSource, sourceFiles.firstOrNull(), R.drawable.ic_person,
             "Tap to upload source face", "JPG \u00B7 PNG \u00B7 WebP",
             { pickMedia(REQ_SOURCE, true, false) }) {
@@ -3365,6 +3374,121 @@ class MainActivity : Activity() {
     /** The chosen swapper's display name, for the option tile. */
     private fun swapperLabel(): String =
         modelOptions().firstOrNull { it.first == swapperFile }?.second ?: "inswapper 128"
+
+    /**
+     * Measure both faces and show the maths.
+     *
+     * Runs off the main thread because it loads the detector. Everything it
+     * reports is measured from the two files as they are - no estimates dressed
+     * up as facts, and nothing here touches the swap.
+     */
+    private fun refreshGeometry() {
+        val source = sourceFiles.firstOrNull()
+        val target = targetFile
+        if (source == null || target == null) {
+            geometryCard.visibility = View.GONE
+            return
+        }
+        val key = source.absolutePath + "|" + target.absolutePath
+        if (geometryBusy || key == geometryKey) return
+        geometryBusy = true
+        geometryKey = key
+        geometryCard.removeAllViews()
+        geometryCard.visibility = View.VISIBLE
+        geometryCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_scan, "Face geometry", "Measured from both photos",
+        ))
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        geometryCard.addView(body)
+        body.addView(RoopUi.meta(this, "Measuring\u2026"))
+
+        Thread({
+            val sGeo = NativeBridge.faceGeometry(this, source.absolutePath)
+            val tGeo = NativeBridge.faceGeometry(this, target.absolutePath)
+            val sCam = CameraInfo.read(source)
+            val tCam = CameraInfo.read(target)
+            io.post {
+                geometryBusy = false
+                body.removeAllViews()
+                val sf = sGeo?.faces?.maxByOrNull { it.box.width() * it.box.height() }
+                val tf = tGeo?.faces?.maxByOrNull { it.box.width() * it.box.height() }
+                if (sGeo == null || tGeo == null || sf == null || tf == null) {
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "No face could be measured in " +
+                            if (sf == null) "the source" else "the target" + "."))
+                    TraceLog.add("geometry", "measurement failed")
+                    return@post
+                }
+                val sProp = FaceMath.proportions(sf)
+                val tProp = FaceMath.proportions(tf)
+                val sPose = FaceMath.pose(sf.landmarks)
+                val tPose = FaceMath.pose(tf.landmarks)
+                val shape = FaceMath.shapeScore(sProp, tProp)
+                val poseDelta = maxOf(
+                    kotlin.math.abs(sPose.yaw - tPose.yaw),
+                    kotlin.math.abs(sPose.pitch - tPose.pitch),
+                )
+                TraceLog.add(
+                    "geometry",
+                    "shape=%.3f poseDelta=%.1f yaw=%.1f/%.1f".format(shape, poseDelta, sPose.yaw, tPose.yaw),
+                )
+
+                body.addView(RoopUi.text(this@MainActivity,
+                    "Proportions   source vs target", 13f, R.color.ink, 1))
+                val diffs = FaceMath.differences(sProp, tProp)
+                val sList = sProp.asList()
+                val tList = tProp.asList()
+                sProp.labels().forEachIndexed { i, label ->
+                    val d = diffs[i]
+                    val sign = if (d >= 0) "+" else ""
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "%-24s %.2f   %.2f   %s%.0f%%".format(label, sList[i], tList[i], sign, d)))
+                }
+
+                body.addView(RoopUi.meta(this@MainActivity,
+                    "Shape match  %.2f  \u2014  %s".format(shape, FaceMath.verdict(shape, poseDelta))))
+
+                body.addView(RoopUi.meta(this@MainActivity,
+                    "Pose   source yaw %.0f\u00B0 pitch %.0f\u00B0 \u00B7 target yaw %.0f\u00B0 pitch %.0f\u00B0"
+                        .format(sPose.yaw, sPose.pitch, tPose.yaw, tPose.pitch)))
+
+                // Camera facts, and whether the lens difference makes the
+                // comparison unreliable.
+                val camLine = buildString {
+                    append("Camera   ")
+                    append(sCam?.focal35mm?.let { "source %.0fmm".format(it) } ?: "source: no EXIF")
+                    append(" \u00B7 ")
+                    append(tCam?.focal35mm?.let { "target %.0fmm".format(it) } ?: "target: no EXIF")
+                }
+                body.addView(RoopUi.meta(this@MainActivity, camLine))
+
+                val sF = sCam?.focal35mm
+                val tF = tCam?.focal35mm
+                if (sF != null && tF != null && kotlin.math.abs(sF - tF) > 12f) {
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "Different lenses \u2014 %.0fmm vs %.0fmm equivalent. Part of this " +
+                            "difference is perspective, not the faces.".format(sF, tF)))
+                } else if (sF == null || tF == null) {
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "No lens data in one of the files, so perspective cannot be corrected. " +
+                            "Treat these numbers as approximate."))
+                }
+
+                val k = tCam?.k1 ?: 0f
+                if (k > 0f && tGeo != null) {
+                    val shift = FaceMath.distortionShiftPx(tf, tGeo, k)
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "Lens distortion   est. %.1fpx at the outer landmarks (k1=%.3f)"
+                            .format(shift, k)))
+                }
+
+                sCam?.distanceMetres(FaceMath.iod(sf.landmarks))?.let { d ->
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "Source shot from about %.2fm".format(d)))
+                }
+            }
+        }, "roop-geometry").start()
+    }
 
     private fun blendLabel(value: Float): String = when {
         value <= 0.01f -> "Off"

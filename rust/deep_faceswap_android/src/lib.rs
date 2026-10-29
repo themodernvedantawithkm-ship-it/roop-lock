@@ -982,3 +982,76 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_identityScoreN
 
     computed.unwrap_or(-1.0)
 }
+
+/// Faces in an image, with their 5 landmarks and the image size, as JSON.
+///
+/// Read-only and fail-safe, like the identity score: it opens its own detector,
+/// reports `{"ok": false}` on any problem, and is never called from inside a
+/// swap. Nothing here can affect a job that already ran.
+///
+/// Why: the existing detect call reports a box and a crop but discards the five
+/// keypoints, and those keypoints are what pose and facial proportions are
+/// computed from. This exposes them without touching that path.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_faceGeometryNative(
+    mut env: JNIEnv,
+    _class: JClass,
+    image_path: JString,
+    detector: JString,
+) -> jstring {
+    let path = jstring_to_string(&mut env, &image_path);
+    let det_path = jstring_to_string(&mut env, &detector);
+
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use deep_faceswap_core::detection::FaceDetector;
+        use deep_faceswap_core::utils::image::{load_image, to_rgb8};
+
+        let img = match load_image(&path) {
+            Ok(i) => i,
+            Err(e) => return serde_json::json!({ "ok": false, "error": e.to_string() }),
+        };
+        let rgb = to_rgb8(&img);
+        let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+        if w == 0 || h == 0 {
+            return serde_json::json!({ "ok": false, "error": "empty image" });
+        }
+        let mut arr = Array3::<u8>::zeros((h, w, 3));
+        for y in 0..h {
+            for x in 0..w {
+                let px = rgb.get_pixel(x as u32, y as u32);
+                arr[[y, x, 0]] = px[0];
+                arr[[y, x, 1]] = px[1];
+                arr[[y, x, 2]] = px[2];
+            }
+        }
+        let mut det = match FaceDetector::new(&det_path) {
+            Ok(d) => d,
+            Err(e) => return serde_json::json!({ "ok": false, "error": e.to_string() }),
+        };
+        let faces = match det.detect(&arr, 0.5, 0.4) {
+            Ok(f) => f,
+            Err(e) => return serde_json::json!({ "ok": false, "error": e.to_string() }),
+        };
+
+        let list: Vec<serde_json::Value> = faces
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "score": f.det_score,
+                    "bbox": [f.bbox.x1, f.bbox.y1, f.bbox.x2, f.bbox.y2],
+                    "landmarks": f.landmarks.iter().map(|p| [p[0], p[1]]).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "ok": true,
+            "width": w,
+            "height": h,
+            "faces": list,
+        })
+    }))
+    .unwrap_or_else(|_| serde_json::json!({ "ok": false, "error": "panicked" }));
+
+    to_jstring(&mut env, payload.to_string())
+}

@@ -331,6 +331,8 @@ object NativeBridge {
 
     private external fun setFaceBlendNative(blend: Float)
 
+    private external fun faceGeometryNative(imagePath: String, detector: String): String
+
     private external fun identityScoreNative(
         sourcePath: String,
         resultPath: String,
@@ -512,6 +514,48 @@ object NativeBridge {
     /** 0.0 the untouched face .. 1.0 the swap in full. */
     fun setFaceBlend(blend: Float) {
         runCatching { setFaceBlendNative(blend.coerceIn(0f, 1f)) }
+    }
+
+    /**
+     * Faces in an image with their five keypoints and the image size.
+     *
+     * Read-only and fail-safe: any problem returns null, and it is never called
+     * from inside a swap.
+     */
+    fun faceGeometry(context: Context, path: String): FaceMath.Geometry? {
+        val models = ModelManager(context)
+        val json = runCatching { faceGeometryNative(path, models.detectorPath) }.getOrNull()
+            ?: return null
+        return try {
+            val obj = JSONObject(json)
+            if (!obj.optBoolean("ok", false)) return null
+            val arr = obj.optJSONArray("faces") ?: return null
+            val faces = (0 until arr.length()).mapNotNull { i ->
+                val f = arr.optJSONObject(i) ?: return@mapNotNull null
+                val box = f.optJSONArray("bbox")
+                val lms = f.optJSONArray("landmarks") ?: return@mapNotNull null
+                if (box == null || box.length() != 4 || lms.length() < 5) return@mapNotNull null
+                val points = (0 until 5).map { k ->
+                    val p = lms.optJSONArray(k) ?: return@mapNotNull null
+                    p.optDouble(0).toFloat() to p.optDouble(1).toFloat()
+                }
+                FaceMath.Face(
+                    box = android.graphics.RectF(
+                        box.optDouble(0).toFloat(), box.optDouble(1).toFloat(),
+                        box.optDouble(2).toFloat(), box.optDouble(3).toFloat(),
+                    ),
+                    score = f.optDouble("score", 0.0).toFloat(),
+                    landmarks = FaceMath.Landmarks(points),
+                )
+            }
+            FaceMath.Geometry(
+                width = obj.optInt("width", 0),
+                height = obj.optInt("height", 0),
+                faces = faces,
+            )
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
