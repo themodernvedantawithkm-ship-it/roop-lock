@@ -78,6 +78,10 @@ class MainActivity : Activity() {
     private var previewBusy = false
     /** The most recent job failure, shown in Diagnostics. */
     private var lastJobError: String? = null
+    internal lateinit var swapCancel: View
+    internal lateinit var vidCancel: View
+    private var pendingPhoneUnlock: ((android.view.View) -> Unit)? = null
+    private var pendingGate: View? = null
 
     // Video job
     private val vSources = mutableListOf<File>()
@@ -151,6 +155,11 @@ class MainActivity : Activity() {
         vMute = prefs.muteAudio
         models.ensureDirs()
         models.copyEmapFromAssetsIfPresent()
+        // Bring back the source face from last time, if the file is still there.
+        prefs.lastSourcePath.takeIf { it.isNotEmpty() }?.let { path ->
+            val f = File(path)
+            if (f.isFile && f.length() > 0L) sourceFiles.add(f)
+        }
         runCatching { resolveSwapper() }
         runCatching { resolveEnhancer() }
 
@@ -583,6 +592,16 @@ class MainActivity : Activity() {
         swapTiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         col.addView(RoopUi.hScroll(this, swapTiles))
 
+        swapCancel = RoopUi.secondaryButton(this, "Cancel", null).apply {
+            visibility = View.GONE
+            setOnClickListener {
+                SwapBus.cancelled.set(true)
+                SwapService.cancel(this@MainActivity)
+                swapStatus.text = "Cancelling\u2026"
+            }
+        }
+        col.addView(swapCancel)
+
         swapCta = RoopUi.primaryButton(this, "Start Swap", R.drawable.ic_swap)
         swapCta.setOnClickListener { runSwap() }
         col.addView(swapCta)
@@ -886,6 +905,16 @@ class MainActivity : Activity() {
         val previewCta = RoopUi.secondaryButton(this, "Preview 4 frames", R.drawable.ic_image)
         previewCta.setOnClickListener { runPreview() }
         col.addView(previewCta)
+
+        vidCancel = RoopUi.secondaryButton(this, "Cancel", null).apply {
+            visibility = View.GONE
+            setOnClickListener {
+                SwapBus.cancelled.set(true)
+                SwapService.cancel(this@MainActivity)
+                vidStatus.text = "Cancelling\u2026"
+            }
+        }
+        col.addView(vidCancel)
 
         vidCta = RoopUi.primaryButton(this, "Generate Video", R.drawable.ic_play)
         vidCta.setOnClickListener { runVideo() }
@@ -1572,6 +1601,27 @@ class MainActivity : Activity() {
                 layoutParams = RoopUi.margin(this@MainActivity, ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 18)
             })
+
+        // --- Lock
+        val lockCard = RoopUi.card(this)
+        lockCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_lock, "Lock", "The PIN asked for when the app opens",
+        ))
+        lockCard.addView(RoopUi.secondaryButton(
+            this,
+            if (prefs.pinHash.isEmpty()) "Set a PIN" else "Change PIN",
+            R.drawable.ic_lock,
+        ).apply {
+            setOnClickListener {
+                prefs.pinHash = ""
+                toast("Close and reopen the app to set a new PIN")
+            }
+        })
+        lockCard.addView(RoopUi.meta(this,
+            "Clearing the PIN means the next launch asks you to choose one. " +
+                "Forgetting it entirely? \"Use phone lock\" on the lock screen is the way " +
+                "back in without deleting your models."))
+        col.addView(lockCard)
 
         // --- Diagnostics
         val diagCard = RoopUi.card(this)
@@ -2363,6 +2413,30 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /**
+     * Unlock with the phone's own credential instead of the app PIN.
+     *
+     * This is the only way back in for someone who forgets the PIN without
+     * clearing app data - which would delete every downloaded model. It is also
+     * stronger than four digits.
+     */
+    fun requestPhoneUnlock(onUnlocked: (android.view.View) -> Unit, gate: android.view.View) {
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        if (km == null || !km.isDeviceSecure) {
+            toast("No phone lock is set up on this device")
+            return
+        }
+        val intent = km.createConfirmDeviceCredentialIntent("Unlock Roop", null)
+        if (intent == null) {
+            toast("No phone lock is set up on this device")
+            return
+        }
+        pendingPhoneUnlock = onUnlocked
+        pendingGate = gate
+        runCatching { startActivityForResult(intent, REQ_PHONE_UNLOCK) }
+            .onFailure { toast("Could not open the phone lock") }
+    }
+
     private fun runSwap() {
         val target = targetFile ?: return
 
@@ -2639,6 +2713,7 @@ class MainActivity : Activity() {
     }
 
     private fun setSwapBusy(busy: Boolean, message: String) {
+        swapCancel.visibility = if (busy) View.VISIBLE else View.GONE
         swapBar.visibility = if (busy) View.VISIBLE else View.GONE
         if (busy) swapBar.progress = 0
         RoopUi.setPrimaryEnabled(swapCta, !busy && sourceFiles.isNotEmpty() && targetFile != null)
@@ -2647,6 +2722,7 @@ class MainActivity : Activity() {
     }
 
     private fun setVideoBusy(busy: Boolean, message: String) {
+        vidCancel.visibility = if (busy) View.VISIBLE else View.GONE
         vidBar.visibility = if (busy) View.VISIBLE else View.GONE
         if (busy) vidBar.progress = 0
         RoopUi.setPrimaryEnabled(vidCta, !busy && vSources.isNotEmpty() && vTarget != null)
@@ -2732,7 +2808,17 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------- result cards
 
+    /**
+     * Drop EXIF from a finished image, so the result does not carry the location
+     * and capture time of the original.
+     */
+    private fun cleanMetadata(file: File) {
+        if (isVideo(file.name) || isAnimation(file.name)) return
+        runCatching { ExifStrip.strip(file) }
+    }
+
     private fun showResultCardFor(file: File, host: String) {
+        cleanMetadata(file)
         val hostView = if (host == "video") vidResult else swapResult
         hostView.removeAllViews()
         hostView.addView(resultCard(file, host))
@@ -2751,6 +2837,27 @@ class MainActivity : Activity() {
         }, RoopUi.weight(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         header.addView(RoopUi.pill(this, "Completed", R.drawable.bg_pill_soft, R.color.success))
         card.addView(header)
+
+        // Before / after, with a divider you drag. Only for still images - a
+        // frame comparison on a clip would need a frame picker to be honest.
+        if (!isVideo(file.name) && !isAnimation(file.name)) {
+            val originalPath = SwapBus.state.originalPath
+            val original = originalPath?.let { File(it) }
+            if (original != null && original.isFile) {
+                BeforeAfterView.of(this, original, file)?.let { view ->
+                    card.addView(view, RoopUi.margin(
+                        this@MainActivity, ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT, 0, 10, 0, 4,
+                    ))
+                    card.addView(RoopUi.meta(this@MainActivity,
+                        "Drag the divider \u2014 left is the original, right is the swap.").apply {
+                        layoutParams = RoopUi.margin(this@MainActivity,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, 0, 8)
+                    })
+                }
+            }
+        }
 
         val preview = FrameLayout(this).apply {
             layoutParams = RoopUi.margin(this@MainActivity, ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2867,6 +2974,17 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_PHONE_UNLOCK) {
+            val callback = pendingPhoneUnlock
+            val gate = pendingGate
+            pendingPhoneUnlock = null
+            pendingGate = null
+            if (resultCode == RESULT_OK && callback != null && gate != null) {
+                TraceLog.add("lock", "unlocked with the phone credential")
+                callback(gate)
+            }
+            return
+        }
         if (requestCode in listOf(REQ_CAM_SOURCE, REQ_CAM_VSOURCE, REQ_CAM_TARGET)) {
             val file = captureTarget
             captureTarget = null
@@ -2874,6 +2992,7 @@ class MainActivity : Activity() {
                 when (requestCode) {
                     REQ_CAM_SOURCE -> {
                         sourceFiles.clear(); sourceFiles.add(file)
+                        prefs.lastSourcePath = file.absolutePath
                         faces = null; mappings.clear()
                     }
                     REQ_CAM_TARGET -> {
@@ -3227,6 +3346,7 @@ class MainActivity : Activity() {
         const val REQ_CAM_SOURCE = 15
         const val REQ_CAM_VSOURCE = 16
         const val REQ_CAM_TARGET = 18
+        const val REQ_PHONE_UNLOCK = 19
         const val REQ_PERMISSION = 17
         const val REQ_NOTIFICATIONS = 19
 

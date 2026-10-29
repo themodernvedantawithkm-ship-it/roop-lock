@@ -38,6 +38,9 @@ class VideoSwap(private val context: Context) {
     /** Outcome of a video swap. */
     data class Result(val ok: Boolean, val frames: Int, val error: String?)
 
+    /** Thrown internally when the user cancels; reported as a cancel, not a fault. */
+    class CancelledException : RuntimeException("Cancelled")
+
     /**
      * Swap faces across [input], writing to [output].
      *
@@ -207,6 +210,12 @@ class VideoSwap(private val context: Context) {
                 val thread = Thread({
                     try {
                         while (true) {
+                            if (SwapBus.cancelled.get()) {
+                                TraceLog.add("video", "cancelled by the user")
+                                failure.compareAndSet(null, CancelledException())
+                                decodeOut.put(END_OF_STREAM)
+                                break
+                            }
                             val item = decodeOut.take()
                             if (item.index < 0) {
                                 // Hand the sentinel on so the other clones stop too.

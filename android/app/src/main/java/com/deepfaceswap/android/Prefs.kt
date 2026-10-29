@@ -75,6 +75,14 @@ class Prefs(context: Context) {
         get() = sp.getStringSet("disabled_models", emptySet()) ?: emptySet()
         set(v) = sp.edit().putStringSet("disabled_models", v).apply()
 
+    /**
+     * The source face used last time, so the next session starts with it rather
+     * than asking again. Cleared when the file is gone.
+     */
+    var lastSourcePath: String
+        get() = sp.getString("last_source", "") ?: ""
+        set(v) = sp.edit().putString("last_source", v).apply()
+
     /** Leave the target's mouth and lips untouched by the swap. */
     var keepLips: Boolean
         get() = sp.getBoolean("keep_lips", false)

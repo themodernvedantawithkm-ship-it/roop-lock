@@ -2,7 +2,9 @@ package com.deepfaceswap.android
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
@@ -10,32 +12,30 @@ import android.widget.TextView
 import java.security.MessageDigest
 
 /**
- * A four-digit PIN gate in front of the app.
+ * The PIN gate in front of the app.
  *
- * This sits *above* the shell rather than replacing it, so the app behind it is
- * already built and ready by the time the PIN is accepted - unlocking is instant
- * instead of starting the whole activity again.
+ * Rewritten because the first version had two real faults: it hardcoded a light
+ * palette, so in dark mode the lock flashed a white screen before the dark app
+ * appeared; and it had no way back in - forgetting a four-digit PIN meant
+ * clearing app data, which deletes every downloaded model.
  *
- * The PIN is never stored. Only a salted SHA-256 of it is kept in [Prefs], which
- * is enough to check an entry and useless to anyone reading the preferences file.
+ * It now takes its colours from the theme, offers the phone's own lock as an
+ * alternative, and allows a limited number of attempts before a short pause.
  *
- * The first launch after installing asks for a PIN twice; every launch after that
- * asks for it once.
+ * The PIN itself is never stored - only a salted SHA-256 of it.
  */
 object LockScreen {
 
     private const val SALT = "picme-lock-v1"
+    private const val MAX_ATTEMPTS = 5
+    private const val COOLDOWN_MS = 30_000L
 
-    /** Salted SHA-256 of the PIN, as lowercase hex. */
     fun hash(pin: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest((SALT + pin).toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * The full-screen gate. [onUnlocked] runs once the correct PIN is entered -
-     * on a first run, once a new PIN has been chosen and confirmed.
-     */
+    /** The full-screen gate. [onUnlocked] runs once the correct PIN is entered. */
     fun build(activity: MainActivity, prefs: Prefs, onUnlocked: (View) -> Unit): View {
         val density = activity.resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
@@ -43,55 +43,62 @@ object LockScreen {
         val stored = prefs.pinHash
         var settingUp = stored.isEmpty()
         var firstEntry: String? = null
+        var attempts = 0
+        var lockedUntil = 0L
         val entered = StringBuilder()
+
+        val ink = activity.getColor(R.color.ink)
+        val muted = activity.getColor(R.color.ink_secondary)
+        val accent = activity.getColor(R.color.blue)
+        val danger = activity.getColor(R.color.danger)
+        val card = activity.getColor(R.color.surface_solid)
+        val line = activity.getColor(R.color.border_cool)
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#F4F6FB"))
+            setBackgroundColor(activity.getColor(R.color.canvas))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            // Swallow every touch so nothing underneath reacts while locked.
             isClickable = true
             isFocusable = true
         }
 
         val title = TextView(activity).apply {
-            textSize = 19f
-            setTextColor(Color.parseColor("#151B33"))
+            textSize = 20f
+            setTextColor(ink)
             gravity = Gravity.CENTER
         }
         root.addView(title)
 
         val hint = TextView(activity).apply {
             textSize = 13f
-            setTextColor(Color.parseColor("#7A8399"))
+            setTextColor(muted)
             gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, dp(24))
+            setPadding(0, dp(6), 0, dp(26))
         }
         root.addView(hint)
 
-        // Four dots showing how many digits are in.
         val dots = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(28))
+            setPadding(0, 0, 0, dp(30))
         }
         val dotViews = (0 until 4).map {
             TextView(activity).apply {
                 text = "\u25CF"
-                textSize = 20f
-                setPadding(dp(9), 0, dp(9), 0)
+                textSize = 22f
+                setPadding(dp(10), 0, dp(10), 0)
             }.also { dots.addView(it) }
         }
         root.addView(dots)
 
         val error = TextView(activity).apply {
             textSize = 12.5f
-            setTextColor(Color.parseColor("#D14343"))
+            setTextColor(danger)
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, dp(14))
+            setPadding(dp(24), 0, dp(24), dp(16))
         }
         root.addView(error)
 
@@ -101,11 +108,10 @@ object LockScreen {
             } else {
                 "Enter PIN"
             }
-            hint.text = if (settingUp) "You will need this every time you open the app"
+            hint.text = if (settingUp) "Needed every time you open the app"
                         else "Four digits"
             dotViews.forEachIndexed { i, v ->
-                val on = i < entered.length
-                v.setTextColor(Color.parseColor(if (on) "#3F67F6" else "#C9D1E3"))
+                v.setTextColor(if (i < entered.length) accent else line)
             }
         }
 
@@ -118,20 +124,24 @@ object LockScreen {
 
         fun key(label: String, onTap: () -> Unit): TextView = TextView(activity).apply {
             text = label
-            textSize = 22f
-            setTextColor(Color.parseColor("#151B33"))
+            textSize = 23f
+            setTextColor(ink)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                setColor(Color.WHITE)
-                cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), Color.parseColor("#E1E6F2"))
+                setColor(card)
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), line)
             }
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(60)).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(74), dp(62)).apply {
                 setMargins(dp(6), dp(6), dp(6), dp(6))
             }
             isClickable = true
+            isHapticFeedbackEnabled = true
             setOnClickListener {
+                // The tick is most of what makes a keypad feel solid.
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                if (System.currentTimeMillis() < lockedUntil) return@setOnClickListener
                 error.text = ""
                 onTap()
                 paint()
@@ -159,7 +169,17 @@ object LockScreen {
                 }
                 hash(pin) == stored -> onUnlocked(root)
                 else -> {
-                    error.text = "Wrong PIN"
+                    attempts++
+                    if (attempts >= MAX_ATTEMPTS) {
+                        lockedUntil = System.currentTimeMillis() + COOLDOWN_MS
+                        attempts = 0
+                        error.text = "Too many attempts \u2014 wait 30 seconds"
+                    } else {
+                        error.text = "Wrong PIN \u2014 ${MAX_ATTEMPTS - attempts} left"
+                    }
+                    root.animate().translationX(dp(8)).setDuration(60).withEndAction {
+                        root.animate().translationX(0f).setDuration(60).start()
+                    }.start()
                     paint()
                 }
             }
@@ -176,7 +196,7 @@ object LockScreen {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             addView(TextView(activity).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(72), dp(60)).apply {
+                layoutParams = LinearLayout.LayoutParams(dp(74), dp(62)).apply {
                     setMargins(dp(6), dp(6), dp(6), dp(6))
                 }
             })
@@ -184,6 +204,21 @@ object LockScreen {
             addView(key("\u232B") { if (entered.isNotEmpty()) entered.setLength(entered.length - 1) })
         })
         root.addView(pad)
+
+        // The phone's own lock is stronger than four digits, and it is the only
+        // way back in if the PIN is forgotten without wiping the models.
+        val phoneLock = TextView(activity).apply {
+            text = "Use phone lock instead"
+            textSize = 14f
+            setTextColor(accent)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(26), 0, 0)
+            isClickable = true
+            setOnClickListener { activity.requestPhoneUnlock(onUnlocked, root) }
+        }
+        root.addView(phoneLock)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) phoneLock.visibility = View.GONE
 
         paint()
         return root

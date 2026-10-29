@@ -124,6 +124,15 @@ object SwapBus {
 
     fun update(transform: (State) -> State) = publish(transform(state))
 
+    /**
+     * Set when the user cancels. The workers poll it between frames.
+     *
+     * Cancelling used to only change the reported state - the video loop kept
+     * decoding and swapping every frame, and then overwrote the state when it
+     * finished. A cancel that does not stop the work is not a cancel.
+     */
+    val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun addListener(listener: (State) -> Unit) {
         listeners.add(listener)
         listener(state)

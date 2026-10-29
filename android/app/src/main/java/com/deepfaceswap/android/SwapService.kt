@@ -32,6 +32,7 @@ class SwapService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
+            SwapBus.cancelled.set(true)
             worker?.interrupt()
             SwapBus.update { it.copy(running = false, stage = SwapBus.Stage.CANCELLED) }
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -81,6 +82,7 @@ class SwapService : Service() {
     }
 
     private fun runVideo(job: SwapBus.Job.Video) {
+        SwapBus.cancelled.set(false)
         SwapBus.update {
             it.copy(
                 running = true, label = "Video swap", stage = SwapBus.Stage.LOADING,
@@ -134,6 +136,7 @@ class SwapService : Service() {
     }
 
     private fun runImage(job: SwapBus.Job.Image) {
+        SwapBus.cancelled.set(false)
         SwapBus.update {
             it.copy(
                 running = true, label = "Face swap", stage = SwapBus.Stage.PREPARING,
