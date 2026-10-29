@@ -139,7 +139,9 @@ object Perspective {
             }
         }
         val inv = invert3(sxx) ?: return null
-        val m = Array(2) { r -> DoubleArray(3) { c -> (0..2).sum { k -> sx[r][k] * inv[k][c] } } }
+        val m = Array(2) { r -> DoubleArray(3) { c ->
+            (0..2).fold(0.0) { acc, k -> acc + sx[r][k] * inv[k][c] }
+        } }
 
         val scale = (norm(m[0]) + norm(m[1])) / 2.0
         if (scale <= 1e-6) return null
