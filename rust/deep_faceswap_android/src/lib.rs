@@ -1103,3 +1103,172 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_faceGeometryNa
 
     to_jstring(&mut env, payload.to_string())
 }
+
+/// The identity embedding of one face in an image, as 512 floats.
+///
+/// Returns an empty array on any problem. Read-only and fail-safe: it is never
+/// called from inside a swap, so a failure here cannot affect a job.
+///
+/// `face_index` counts faces by area, largest first, so index 0 is the main
+/// subject - which is what a saved person almost always is.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_embeddingForFaceNative(
+    mut env: JNIEnv,
+    _class: JClass,
+    image_path: JString,
+    detector: JString,
+    recognizer: JString,
+    face_index: jint,
+) -> jfloatArray {
+    let path = jstring_to_string(&mut env, &image_path);
+    let det_path = jstring_to_string(&mut env, &detector);
+    let rec_path = jstring_to_string(&mut env, &recognizer);
+    let want = face_index.max(0) as usize;
+
+    let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Option<Vec<f32>> {
+        use deep_faceswap_core::alignment::align_face;
+        use deep_faceswap_core::detection::FaceDetector;
+        use deep_faceswap_core::recognition::FaceRecognizer;
+        use deep_faceswap_core::utils::image::{load_image, to_rgb8};
+
+        let img = load_image(&path).ok()?;
+        let rgb = to_rgb8(&img);
+        let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let mut arr = Array3::<u8>::zeros((h, w, 3));
+        for y in 0..h {
+            for x in 0..w {
+                let px = rgb.get_pixel(x as u32, y as u32);
+                arr[[y, x, 0]] = px[0];
+                arr[[y, x, 1]] = px[1];
+                arr[[y, x, 2]] = px[2];
+            }
+        }
+        let mut det = FaceDetector::new(&det_path).ok()?;
+        let mut faces = det.detect(&arr, 0.5, 0.4).ok()?;
+        if faces.is_empty() {
+            return None;
+        }
+        faces.sort_by(|a, b| {
+            let aa = (a.bbox.x2 - a.bbox.x1) * (a.bbox.y2 - a.bbox.y1);
+            let bb = (b.bbox.x2 - b.bbox.x1) * (b.bbox.y2 - b.bbox.y1);
+            bb.partial_cmp(&aa).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let face = faces.get(want)?;
+        let aligned = align_face(&arr, face, 112).ok()?;
+        let mut rec = FaceRecognizer::new(&rec_path).ok()?;
+        rec.extract_embedding(&aligned.aligned_image).ok()
+    }))
+    .ok()
+    .flatten();
+
+    match computed {
+        Some(values) => match env.new_float_array(values.len() as i32) {
+            Ok(arr) => {
+                let _ = env.set_float_array_region(&arr, 0, &values);
+                arr.into_raw()
+            }
+            Err(_) => std::ptr::null_mut(),
+        },
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Average several photos of one person into a single aligned face image.
+///
+/// Why this exists: the swapper consumes an identity vector, and the vector comes
+/// from a face image. Averaging the *aligned* faces and using the result as the
+/// source therefore gives a better estimate of the person than any one photo -
+/// the individual poses and lighting average out, while the structure they share
+/// survives. Writing it to a file means the whole existing swap path can be used
+/// unchanged.
+///
+/// Returns true when the image was written. Fail-safe: any problem returns false
+/// and the caller falls back to a single photo.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_meanFaceNative(
+    mut env: JNIEnv,
+    _class: JClass,
+    paths_csv: JString,
+    out_path: JString,
+    detector: JString,
+    size: jint,
+) -> jboolean {
+    let csv = jstring_to_string(&mut env, &paths_csv);
+    let out = jstring_to_string(&mut env, &out_path);
+    let det_path = jstring_to_string(&mut env, &detector);
+    let side = size.clamp(64, 512) as usize;
+
+    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> bool {
+        use deep_faceswap_core::alignment::align_face;
+        use deep_faceswap_core::detection::FaceDetector;
+        use deep_faceswap_core::utils::image::{load_image, to_rgb8};
+
+        let mut sum = vec![0f32; 3 * side * side];
+        let mut count = 0usize;
+
+        for raw in csv.split(',') {
+            let path = raw.trim();
+            if path.is_empty() {
+                continue;
+            }
+            let step = (|| -> Option<()> {
+                let img = load_image(path).ok()?;
+                let rgb = to_rgb8(&img);
+                let (w, h) = (rgb.width() as usize, rgb.height() as usize);
+                if w == 0 || h == 0 {
+                    return None;
+                }
+                let mut arr = Array3::<u8>::zeros((h, w, 3));
+                for y in 0..h {
+                    for x in 0..w {
+                        let px = rgb.get_pixel(x as u32, y as u32);
+                        arr[[y, x, 0]] = px[0];
+                        arr[[y, x, 1]] = px[1];
+                        arr[[y, x, 2]] = px[2];
+                    }
+                }
+                let mut det = FaceDetector::new(&det_path).ok()?;
+                let faces = det.detect(&arr, 0.5, 0.4).ok()?;
+                // Largest face only: a saved person's photo is about them.
+                let face = faces.into_iter().max_by(|a, b| {
+                    let aa = (a.bbox.x2 - a.bbox.x1) * (a.bbox.y2 - a.bbox.y1);
+                    let bb = (b.bbox.x2 - b.bbox.x1) * (b.bbox.y2 - b.bbox.y1);
+                    aa.partial_cmp(&bb).unwrap_or(std::cmp::Ordering::Equal)
+                })?;
+                let aligned = align_face(&arr, &face, side as u32).ok()?;
+                for c in 0..3usize {
+                    for y in 0..side {
+                        for x in 0..side {
+                            sum[(c * side + y) * side + x] += aligned.aligned_image[[0, c, y, x]];
+                        }
+                    }
+                }
+                count += 1;
+                Some(())
+            })();
+            let _ = step;
+        }
+
+        if count == 0 {
+            return false;
+        }
+        let mut buf = image::RgbImage::new(side as u32, side as u32);
+        for y in 0..side {
+            for x in 0..side {
+                let px = image::Rgb([
+                    ((sum[y * side + x] / count as f32) * 255.0).clamp(0.0, 255.0) as u8,
+                    ((sum[(side * side) + y * side + x] / count as f32) * 255.0).clamp(0.0, 255.0) as u8,
+                    ((sum[(2 * side * side) + y * side + x] / count as f32) * 255.0).clamp(0.0, 255.0) as u8,
+                ]);
+                buf.put_pixel(x as u32, y as u32, px);
+            }
+        }
+        buf.save(&out).is_ok()
+    }))
+    .unwrap_or(false);
+
+    if done { 1 } else { 0 }
+}

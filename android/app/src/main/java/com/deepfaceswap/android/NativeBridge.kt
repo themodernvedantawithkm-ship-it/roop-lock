@@ -335,6 +335,20 @@ object NativeBridge {
 
     private external fun setShapeNative(sx: Float, sy: Float)
 
+    private external fun embeddingForFaceNative(
+        imagePath: String,
+        detector: String,
+        recognizer: String,
+        faceIndex: Int,
+    ): FloatArray?
+
+    private external fun meanFaceNative(
+        pathsCsv: String,
+        outPath: String,
+        detector: String,
+        size: Int,
+    ): Boolean
+
     private external fun faceGeometryNative(imagePath: String, detector: String): String
 
     private external fun identityScoreNative(
@@ -528,6 +542,31 @@ object NativeBridge {
     /** Rescale the swapped face; both factors are clamped again in the core. */
     fun setShape(sx: Float, sy: Float) {
         runCatching { setShapeNative(sx.coerceIn(0.85f, 1.18f), sy.coerceIn(0.85f, 1.18f)) }
+    }
+
+    /**
+     * The identity embedding of one face, largest face first.
+     *
+     * Read-only and fail-safe: null when it cannot be computed.
+     */
+    fun embeddingForFace(context: Context, path: String, faceIndex: Int = 0): FloatArray? {
+        val models = ModelManager(context)
+        val v = runCatching {
+            embeddingForFaceNative(path, models.detectorPath, models.recognizerPath, faceIndex)
+        }.getOrNull() ?: return null
+        return if (v.isEmpty()) null else v
+    }
+
+    /**
+     * Average several photos of one person into a single aligned face at
+     * [outPath]. False when nothing could be averaged.
+     */
+    fun meanFace(context: Context, paths: List<String>, outPath: String, size: Int = 128): Boolean {
+        if (paths.isEmpty()) return false
+        val models = ModelManager(context)
+        return runCatching {
+            meanFaceNative(paths.joinToString(","), outPath, models.detectorPath, size)
+        }.getOrDefault(false)
     }
 
     /**

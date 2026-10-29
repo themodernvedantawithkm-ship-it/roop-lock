@@ -83,6 +83,10 @@ class MainActivity : Activity() {
     private var geometryBusy = false
     /** The source|target pair currently measured, so it is not redone. */
     private var geometryKey = ""
+    private lateinit var people: PeopleStore
+    /** The saved person currently chosen as the source, if any. */
+    private var selectedPerson: PeopleStore.Person? = null
+    private lateinit var peopleRow: LinearLayout
     /** Proportion adjustment derived from the last measurement, 1.0 = none. */
     private var shapeSx = 1f
     private var shapeSy = 1f
@@ -160,6 +164,7 @@ class MainActivity : Activity() {
         restoreOn = prefs.restore
         swapperFile = prefs.modelFile
         vMute = prefs.muteAudio
+        people = PeopleStore(this)
         models.ensureDirs()
         models.copyEmapFromAssetsIfPresent()
         // Bring back the source face from last time, if the file is still there.
@@ -184,6 +189,7 @@ class MainActivity : Activity() {
         screens["swap"] = buildSwapScreen().also { content.addView(it) }
         screens["video"] = buildVideoScreen().also { content.addView(it) }
         screens["history"] = buildHistoryScreen().also { content.addView(it) }
+        screens["people"] = buildPeopleScreen().also { content.addView(it) }
         screens["settings"] = buildSettingsScreen().also { content.addView(it) }
         screens["tools"] = buildToolsScreen().also { content.addView(it) }
 
@@ -541,6 +547,19 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 18)
         })
 
+        // Saved people sit above the source picker: the common case is reusing
+        // someone, and it should be one tap rather than a file dialog.
+        val peopleCard = RoopUi.card(this)
+        peopleCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_person, "People", "Saved faces, ready to reuse",
+        ))
+        peopleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        peopleCard.addView(RoopUi.hScroll(this, peopleRow))
+        peopleCard.addView(RoopUi.meta(this,
+            "A saved person is an averaged identity, not one photo \u2014 so it swaps " +
+                "more reliably than any single picture."))
+        col.addView(peopleCard)
+
         swapSource = uploadCard(
             step = 1,
             stepIcon = R.drawable.ic_person,
@@ -649,6 +668,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshSwap() {
+        runCatching { refreshPeopleRow() }
         runCatching { refreshGeometry() }
         renderUpload(swapSource, sourceFiles.firstOrNull(), R.drawable.ic_person,
             "Tap to upload source face", "JPG \u00B7 PNG \u00B7 WebP",
@@ -1648,6 +1668,235 @@ class MainActivity : Activity() {
         }
 
     // --------------------------------------------------- settings screen
+
+    /**
+     * The saved-people page.
+     *
+     * Adding a person takes several photos at once and averages them: the
+     * engine writes an averaged aligned face, and the embedding centroid is
+     * computed from each photo. The consistency figure is the mean pairwise
+     * similarity of those photos - a low one means the set contains a mislabel
+     * or a bad shot, which would otherwise degrade the person silently.
+     */
+    private fun buildPeopleScreen(): View {
+        val col = pageColumn()
+        col.addView(RoopUi.screenTitle(this, "People"))
+        col.addView(RoopUi.body(this,
+            "Saved faces you can reuse without picking a photo every time.").apply {
+            layoutParams = RoopUi.margin(this@MainActivity, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 16)
+        })
+
+        val addCard = RoopUi.card(this)
+        addCard.addView(RoopUi.primaryButton(this, "Add a person", R.drawable.ic_person).apply {
+            setOnClickListener {
+                pickMedia(REQ_PERSON_PHOTOS, multiple = true, allowVideo = false)
+            }
+        })
+        addCard.addView(RoopUi.meta(this,
+            "Pick two or three photos of the same person. Different angles and light " +
+                "make the average stronger, not weaker."))
+        col.addView(addCard)
+
+        val list = people.all()
+        if (list.isEmpty()) {
+            val empty = RoopUi.card(this)
+            empty.addView(RoopUi.sectionHeader(
+                this, R.drawable.ic_person, "No one saved yet", "Add someone above",
+            ))
+            col.addView(empty)
+            return col
+        }
+
+        list.forEach { person ->
+            val card = RoopUi.card(this)
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            if (person.hasMeanFace) {
+                val file = File(person.meanFacePath)
+                if (file.isFile) {
+                    row.addView(android.widget.ImageView(this).apply {
+                        setImageBitmap(
+                            android.graphics.BitmapFactory.decodeFile(file.absolutePath),
+                        )
+                        scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                        layoutParams = LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                            setMargins(0, 0, dp(12), 0)
+                        }
+                        background = getDrawable(R.drawable.bg_thumb)
+                        clipToOutline = true
+                    })
+                }
+            }
+            row.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(RoopUi.text(this@MainActivity, person.name, 15f, R.color.ink, 1))
+                addView(RoopUi.meta(this@MainActivity,
+                    "${person.photoCount} photo${if (person.photoCount == 1) "" else "s"} " +
+                        "\u00B7 ${person.quality} (${"%.2f".format(person.consistency)})"))
+            }, RoopUi.weight(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            card.addView(row)
+
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            actions.addView(RoopUi.secondaryButton(this, "Use", R.drawable.ic_swap).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(0, dp(10), dp(6), 0)
+                }
+                setOnClickListener { applyPerson(person) }
+            })
+            actions.addView(RoopUi.secondaryButton(this, "Rename", null).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(dp(6), dp(10), dp(6), 0)
+                }
+                setOnClickListener { promptRename(person) }
+            })
+            actions.addView(RoopUi.secondaryButton(this, "Remove", null).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    setMargins(dp(6), dp(10), 0, 0)
+                }
+                setOnClickListener {
+                    people.remove(person.id)
+                    if (selectedPerson?.id == person.id) selectedPerson = null
+                    TraceLog.add("people", "removed ${person.name}")
+                    show("people")
+                    refreshSwap()
+                }
+            })
+            card.addView(actions)
+            col.addView(card)
+        }
+        return col
+    }
+
+    private fun promptRename(person: PeopleStore.Person) {
+        val dialog = Dialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_sheet)
+            setPadding(dp(22), dp(20), dp(22), dp(20))
+        }
+        box.addView(RoopUi.text(this, "Name this person", 17f, R.color.ink, 1))
+        val field = android.widget.EditText(this).apply {
+            setText(person.name)
+            setSingleLine()
+            setTextColor(getColor(R.color.ink))
+        }
+        box.addView(field)
+        box.addView(textButton("Save", R.color.blue) {
+            val name = field.text.toString().trim().ifEmpty { "Unnamed" }
+            people.rename(person.id, name)
+            selectedPerson = selectedPerson?.takeIf { it.id == person.id }?.copy(name = name)
+            dialog.dismiss()
+            show("people")
+            refreshSwap()
+        })
+        dialog.setContentView(box)
+        presentBottomSheet(dialog)
+    }
+
+    /** Make a saved person the source for the next swap. */
+    private fun applyPerson(person: PeopleStore.Person) {
+        val mean = File(person.meanFacePath)
+        if (!person.hasMeanFace || !mean.isFile) {
+            toast("${person.name} has no averaged face - re-add them")
+            return
+        }
+        selectedPerson = person
+        sourceFiles.clear()
+        sourceFiles.add(mean)
+        prefs.lastSourcePath = mean.absolutePath
+        faces = null
+        mappings.clear()
+        geometryKey = ""
+        TraceLog.add("people", "source set to ${person.name}")
+        show("swap")
+        refreshSwap()
+        toast("Using ${person.name}")
+    }
+
+    /** Build a person from a set of photos, off the main thread. */
+    private fun createPerson(files: List<File>) {
+        if (files.isEmpty()) return
+        val dialog = Dialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_sheet)
+            setPadding(dp(22), dp(20), dp(22), dp(20))
+        }
+        box.addView(RoopUi.text(this, "Adding a person", 17f, R.color.ink, 1))
+        val status = RoopUi.meta(this, "Reading ${files.size} photo(s)\u2026")
+        box.addView(status)
+        dialog.setContentView(box)
+        presentBottomSheet(dialog)
+
+        Thread({
+            val paths = files.map { it.absolutePath }
+            val vectors = paths.mapNotNull { NativeBridge.embeddingForFace(this, it) }
+            val id = "p" + System.currentTimeMillis().toString(36)
+            val meanFile = people.meanFaceFile(id)
+            val madeMean = NativeBridge.meanFace(this, paths, meanFile.absolutePath, 128)
+            val centroid = PeopleStore.average(vectors)
+            val consistency = PeopleStore.consistency(vectors)
+
+            io.post {
+                dialog.dismiss()
+                if (vectors.isEmpty()) {
+                    toast("No face could be read in those photos")
+                    TraceLog.add("people", "no embeddings from ${files.size} photos")
+                    return@post
+                }
+                if (!madeMean) {
+                    // Averaging failed but the vectors exist: fall back to the
+                    // first photo as the visible source rather than losing them.
+                    TraceLog.add("people", "mean face failed; using the first photo")
+                }
+                val person = PeopleStore.Person(
+                    id = id,
+                    name = "Person ${people.all().size + 1}",
+                    centroid = centroid,
+                    meanFacePath = if (madeMean) meanFile.absolutePath
+                                    else files.first().absolutePath,
+                    photoCount = vectors.size,
+                    consistency = consistency,
+                    createdAt = System.currentTimeMillis(),
+                )
+                people.add(person)
+                TraceLog.add(
+                    "people",
+                    "added $id from ${vectors.size} photos, consistency=%.2f".format(consistency),
+                )
+                show("people")
+                if (consistency < 0.45f) {
+                    toast("Those photos look like different people - check them")
+                } else {
+                    toast("Added with ${vectors.size} photo(s)")
+                }
+            }
+        }, "roop-people").start()
+    }
+
+    private fun refreshPeopleRow() {
+        peopleRow.removeAllViews()
+        val list = people.all()
+        if (list.isEmpty()) {
+            peopleRow.addView(RoopUi.secondaryButton(this, "Add someone", R.drawable.ic_person).apply {
+                setOnClickListener { show("people") }
+            })
+            return
+        }
+        list.take(12).forEach { person ->
+            peopleRow.addView(RoopUi.optionTile(
+                this, R.drawable.ic_person, person.name, person.quality,
+            ).apply {
+                setOnClickListener { applyPerson(person) }
+            })
+        }
+        peopleRow.addView(RoopUi.optionTile(
+            this, R.drawable.ic_tools, "Manage", "Add or remove",
+        ).apply { setOnClickListener { show("people") } })
+    }
 
     private fun buildSettingsScreen(): View {
         val col = pageColumn()
@@ -3161,7 +3410,12 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQ_SOURCE -> {
                 sourceFiles.clear(); sourceFiles.addAll(picked)
+                selectedPerson = null
                 faces = null; mappings.clear()
+            }
+            REQ_PERSON_PHOTOS -> {
+                createPerson(picked)
+                return
             }
             REQ_TARGET -> {
                 targetFile = picked.first(); faces = null; mappings.clear()
@@ -3637,6 +3891,7 @@ class MainActivity : Activity() {
         const val REQ_CAM_VSOURCE = 16
         const val REQ_CAM_TARGET = 18
         const val REQ_PHONE_UNLOCK = 19
+        const val REQ_PERSON_PHOTOS = 20
         const val REQ_PERMISSION = 17
         const val REQ_NOTIFICATIONS = 19
 
