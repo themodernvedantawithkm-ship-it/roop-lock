@@ -96,7 +96,7 @@ data class CameraInfo(
                 focalMm = float(ExifInterface.TAG_FOCAL_LENGTH),
                 focal35mm = float(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM),
                 fNumber = float(ExifInterface.TAG_F_NUMBER),
-                iso = exif?.getAttribute(ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.toIntOrNull(),
+                iso = exif?.getAttribute("PhotographicSensitivity")?.toIntOrNull(),
                 exposureSeconds = exif?.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.toDoubleOrNull(),
                 make = exif?.getAttribute(ExifInterface.TAG_MAKE),
                 model = exif?.getAttribute(ExifInterface.TAG_MODEL),
