@@ -134,6 +134,33 @@ object FaceMath {
     }
 
     /**
+     * Proportions with the foreshortening of head pose divided back out.
+     *
+     * A face turned 30 degrees has its horizontal distances compressed by
+     * roughly cos(30) = 0.87 in the photo, and a head tilted down compresses the
+     * vertical ones. Comparing raw ratios across two differently-posed photos
+     * therefore mixes pose into the shape comparison. Dividing by the cosine
+     * undoes that, to the accuracy of the pose estimate.
+     */
+    fun correctedProportions(face: Face, pose: Pose): Proportions {
+        val raw = proportions(face)
+        val yaw = Math.toRadians(pose.yaw.toDouble().coerceIn(-75.0, 75.0))
+        val pitch = Math.toRadians(pose.pitch.toDouble().coerceIn(-60.0, 60.0))
+        // Never divide by less than 0.35, or a bad pose estimate explodes the
+        // measurement instead of nudging it.
+        val h = cos(yaw).coerceAtLeast(0.35).toFloat()
+        val v = cos(pitch).coerceAtLeast(0.35).toFloat()
+        return Proportions(
+            eyeSpacingOverFaceWidth = raw.eyeSpacingOverFaceWidth / h,
+            eyeToNoseOverIod = raw.eyeToNoseOverIod / v,
+            noseToMouthOverIod = raw.noseToMouthOverIod / v,
+            mouthWidthOverIod = raw.mouthWidthOverIod / h,
+            faceHeightOverIod = raw.faceHeightOverIod / v,
+            faceAspect = raw.faceAspect * h / v,
+        )
+    }
+
+    /**
      * How alike two faces are in proportion, 0..1.
      *
      * Each measurement is compared as a log ratio, so a 20% difference counts the

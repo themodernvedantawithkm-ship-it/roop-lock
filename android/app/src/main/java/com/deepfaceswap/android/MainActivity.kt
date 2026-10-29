@@ -3419,10 +3419,24 @@ class MainActivity : Activity() {
                     TraceLog.add("geometry", "measurement failed")
                     return@post
                 }
-                val sProp = FaceMath.proportions(sf)
-                val tProp = FaceMath.proportions(tf)
-                val sPose = FaceMath.pose(sf.landmarks)
-                val tPose = FaceMath.pose(tf.landmarks)
+                // Recover camera and pose from the pixels when the file has no
+                // EXIF to say so - which is the normal case for a screenshot.
+                val sSource = Perspective.classify(source, sCam)
+                val tSource = Perspective.classify(target, tCam)
+                val sEst = Perspective.solve(
+                    sf.landmarks, sGeo.width, sGeo.height, sSource,
+                )
+                val tEst = Perspective.solve(
+                    tf.landmarks, tGeo.width, tGeo.height, tSource,
+                )
+
+                val sPose = sEst?.let { FaceMath.Pose(it.yaw, it.pitch, it.roll) }
+                    ?: FaceMath.pose(sf.landmarks)
+                val tPose = tEst?.let { FaceMath.Pose(it.yaw, it.pitch, it.roll) }
+                    ?: FaceMath.pose(tf.landmarks)
+
+                val sProp = FaceMath.correctedProportions(sf, sPose)
+                val tProp = FaceMath.correctedProportions(tf, tPose)
                 val shape = FaceMath.shapeScore(sProp, tProp)
                 val poseDelta = maxOf(
                     kotlin.math.abs(sPose.yaw - tPose.yaw),
@@ -3449,29 +3463,41 @@ class MainActivity : Activity() {
                     "Shape match  %.2f  \u2014  %s".format(shape, FaceMath.verdict(shape, poseDelta))))
 
                 body.addView(RoopUi.meta(this@MainActivity,
-                    "Pose   source yaw %.0f\u00B0 pitch %.0f\u00B0 \u00B7 target yaw %.0f\u00B0 pitch %.0f\u00B0"
+                    "Pose (corrected)   source yaw %.0f\u00B0 pitch %.0f\u00B0 \u00B7 " +
+                        "target yaw %.0f\u00B0 pitch %.0f\u00B0"
                         .format(sPose.yaw, sPose.pitch, tPose.yaw, tPose.pitch)))
 
-                // Camera facts, and whether the lens difference makes the
-                // comparison unreliable.
-                val camLine = buildString {
-                    append("Camera   ")
-                    append(sCam?.focal35mm?.let { "source %.0fmm".format(it) } ?: "source: no EXIF")
-                    append(" \u00B7 ")
-                    append(tCam?.focal35mm?.let { "target %.0fmm".format(it) } ?: "target: no EXIF")
+                fun lensLine(label: String, est: Perspective.Estimate?, cam: CameraInfo?): String {
+                    if (est == null) {
+                        return "$label  no camera data and the pose could not be solved"
+                    }
+                    val how = when (est.source) {
+                        Perspective.Source.CAMERA_EXIF -> "from EXIF"
+                        Perspective.Source.SCREENSHOT -> "inferred \u2014 screenshot"
+                        Perspective.Source.INFERRED -> "inferred from the face"
+                        Perspective.Source.UNKNOWN -> "inferred"
+                    }
+                    val dist = est.distanceMetres?.let { ", about %.2fm".format(it) } ?: ""
+                    return "$label  %.0fmm equivalent (%s, fit %s%s)"
+                        .format(est.focal35mm, how, est.confidence, dist)
                 }
-                body.addView(RoopUi.meta(this@MainActivity, camLine))
+                body.addView(RoopUi.meta(this@MainActivity, lensLine("Source lens", sEst, sCam)))
+                body.addView(RoopUi.meta(this@MainActivity, lensLine("Target lens", tEst, tCam)))
 
-                val sF = sCam?.focal35mm
-                val tF = tCam?.focal35mm
+                val sShot = sEst?.source == Perspective.Source.SCREENSHOT
+                val tShot = tEst?.source == Perspective.Source.SCREENSHOT
+                if (sShot || tShot) {
+                    body.addView(RoopUi.meta(this@MainActivity,
+                        "One of these is a screenshot, so it has no lens of its own. The " +
+                            "numbers describe the photo it is a copy of, not a camera."))
+                }
+
+                val sF = sEst?.focal35mm ?: sCam?.focal35mm
+                val tF = tEst?.focal35mm ?: tCam?.focal35mm
                 if (sF != null && tF != null && kotlin.math.abs(sF - tF) > 12f) {
                     body.addView(RoopUi.meta(this@MainActivity,
                         "Different lenses \u2014 %.0fmm vs %.0fmm equivalent. Part of this " +
                             "difference is perspective, not the faces.".format(sF, tF)))
-                } else if (sF == null || tF == null) {
-                    body.addView(RoopUi.meta(this@MainActivity,
-                        "No lens data in one of the files, so perspective cannot be corrected. " +
-                            "Treat these numbers as approximate."))
                 }
 
                 val k = tCam?.k1 ?: 0f
@@ -3480,11 +3506,6 @@ class MainActivity : Activity() {
                     body.addView(RoopUi.meta(this@MainActivity,
                         "Lens distortion   est. %.1fpx at the outer landmarks (k1=%.3f)"
                             .format(shift, k)))
-                }
-
-                sCam?.distanceMetres(FaceMath.iod(sf.landmarks))?.let { d ->
-                    body.addView(RoopUi.meta(this@MainActivity,
-                        "Source shot from about %.2fm".format(d)))
                 }
             }
         }, "roop-geometry").start()
