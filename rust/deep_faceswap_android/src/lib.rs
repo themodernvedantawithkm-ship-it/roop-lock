@@ -64,6 +64,13 @@ fn with_session<T>(
 /// A process-wide switch rather than a new argument on every entry point: it is
 /// set once per job by the app, and this keeps five JNI signatures untouched.
 static COLOR_MATCH: AtomicBool = AtomicBool::new(true);
+/// Relight the swapped face to the target's shading. Off unless asked.
+static RELIGHT: AtomicBool = AtomicBool::new(false);
+/// Horizontal scale for the swapped face, f32 bits. 1.0 = unchanged.
+static SHAPE_SX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3F80_0000);
+/// Vertical scale for the swapped face, f32 bits. 1.0 = unchanged.
+static SHAPE_SY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3F80_0000);
+
 /// Face Blend, stored as f32 bits because atomics have no f32. 1.0 = full swap.
 static FACE_BLEND: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0x3F80_0000); // 1.0f32
@@ -142,6 +149,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapImage(
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     // Reset progress so a stale value from a previous run can never be shown.
@@ -320,6 +330,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapImageMappe
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     STAGE.store(SwapStage::LoadingModels as i32, Ordering::SeqCst);
@@ -417,6 +430,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_swapAnimation(
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     STAGE.store(SwapStage::LoadingModels as i32, Ordering::SeqCst);
@@ -581,6 +597,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -639,6 +658,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     let input = match env.convert_byte_array(&frame) {
@@ -705,6 +727,9 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_sessionSwapFra
         enhancer_strength: enhancer_strength.clamp(0.0, 1.0),
         color_match: COLOR_MATCH.load(Ordering::Relaxed),
         face_blend: f32::from_bits(FACE_BLEND.load(Ordering::Relaxed)),
+        relight: RELIGHT.load(Ordering::Relaxed),
+        shape_sx: f32::from_bits(SHAPE_SX.load(Ordering::Relaxed)),
+        shape_sy: f32::from_bits(SHAPE_SY.load(Ordering::Relaxed)),
     };
 
     let input = match env.convert_byte_array(&frame) {
@@ -876,6 +901,29 @@ pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_setFaceBlendNa
     blend: jfloat,
 ) {
     FACE_BLEND.store(blend.to_bits(), Ordering::Relaxed);
+}
+
+/// Turn relighting on or off for the next swap.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_setRelightNative(
+    _env: JNIEnv,
+    _class: JClass,
+    enabled: jboolean,
+) {
+    RELIGHT.store(enabled != 0, Ordering::Relaxed);
+}
+
+/// Set the proportion adjustment for the next swap. Both are clamped again in
+/// the core, so a bad value here cannot distort a face into nonsense.
+#[no_mangle]
+pub extern "system" fn Java_com_deepfaceswap_android_NativeBridge_setShapeNative(
+    _env: JNIEnv,
+    _class: JClass,
+    sx: jfloat,
+    sy: jfloat,
+) {
+    SHAPE_SX.store(sx.to_bits(), Ordering::Relaxed);
+    SHAPE_SY.store(sy.to_bits(), Ordering::Relaxed);
 }
 
 /// Release the swap session and free its models.

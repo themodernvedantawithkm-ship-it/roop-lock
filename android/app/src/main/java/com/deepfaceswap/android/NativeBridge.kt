@@ -331,6 +331,10 @@ object NativeBridge {
 
     private external fun setFaceBlendNative(blend: Float)
 
+    private external fun setRelightNative(enabled: Boolean)
+
+    private external fun setShapeNative(sx: Float, sy: Float)
+
     private external fun faceGeometryNative(imagePath: String, detector: String): String
 
     private external fun identityScoreNative(
@@ -514,6 +518,16 @@ object NativeBridge {
     /** 0.0 the untouched face .. 1.0 the swap in full. */
     fun setFaceBlend(blend: Float) {
         runCatching { setFaceBlendNative(blend.coerceIn(0f, 1f)) }
+    }
+
+    /** Light the swapped face with the target's shading. */
+    fun setRelight(enabled: Boolean) {
+        runCatching { setRelightNative(enabled) }
+    }
+
+    /** Rescale the swapped face; both factors are clamped again in the core. */
+    fun setShape(sx: Float, sy: Float) {
+        runCatching { setShapeNative(sx.coerceIn(0.85f, 1.18f), sy.coerceIn(0.85f, 1.18f)) }
     }
 
     /**

@@ -93,6 +93,8 @@ class SwapService : Service() {
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
         NativeBridge.setFaceBlend(job.faceBlend)
+        NativeBridge.setRelight(job.relight)
+        NativeBridge.setShape(job.shapeSx, job.shapeSy)
         TraceLog.add(
             "video",
             "start ${File(job.inputPath).name} clones=${job.clones} boost=${job.pixelBoost} " +
@@ -147,6 +149,8 @@ class SwapService : Service() {
         notifyProgress()
         NativeBridge.setColorMatch(job.colorMatch)
         NativeBridge.setFaceBlend(job.faceBlend)
+        NativeBridge.setRelight(job.relight)
+        NativeBridge.setShape(job.shapeSx, job.shapeSy)
         TraceLog.add(
             "image",
             "start ${File(job.targetPath).name} swapper=${job.swapperFile} " +

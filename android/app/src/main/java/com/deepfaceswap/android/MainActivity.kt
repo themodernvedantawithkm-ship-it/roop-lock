@@ -83,6 +83,9 @@ class MainActivity : Activity() {
     private var geometryBusy = false
     /** The source|target pair currently measured, so it is not redone. */
     private var geometryKey = ""
+    /** Proportion adjustment derived from the last measurement, 1.0 = none. */
+    private var shapeSx = 1f
+    private var shapeSy = 1f
     internal lateinit var vidCancel: View
     private var pendingPhoneUnlock: ((android.view.View) -> Unit)? = null
     private var pendingGate: View? = null
@@ -754,6 +757,27 @@ class MainActivity : Activity() {
                     ),
                 ) { pick -> prefs.outputFormat = labels[pick]; refreshSwap() }
             }
+        })
+        swapTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_image, "Relight", if (prefs.relight) "On" else "Off",
+        ).apply {
+            setOnClickListener {
+                showSheet(
+                    "Relight", listOf("On", "Off"), if (prefs.relight) 0 else 1,
+                    listOf(
+                        "Give the swapped face the target's lighting, so the face and the " +
+                            "scene are lit from the same direction.",
+                        "Leave the swap's own lighting. Use this when the result looks " +
+                            "washed out or over-contrasted.",
+                    ),
+                ) { pick -> prefs.relight = pick == 0; refreshSwap(); refreshVideo() }
+            }
+        })
+        swapTiles.addView(RoopUi.optionTile(
+            this, R.drawable.ic_scan, "Face shape",
+            if (prefs.shapeStrength <= 0.01f) "Off" else "${(prefs.shapeStrength * 100).toInt()}%",
+        ).apply {
+            setOnClickListener { showShapeSheet() }
         })
         swapTiles.addView(RoopUi.optionTile(
             this, R.drawable.ic_palette, "Color Match", if (prefs.colorMatch) "On" else "Off",
@@ -2150,6 +2174,50 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * How far to move the face's overall proportion toward the source's.
+     *
+     * Deliberately a slider rather than an automatic decision: a scale changes
+     * height against width and the balance between horizontal and vertical
+     * distances, but it cannot move one feature relative to another. Pushed far
+     * it looks wrong, and only you can judge where that starts.
+     */
+    private fun showShapeSheet() {
+        val dialog = Dialog(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_sheet)
+            setPadding(dp(22), dp(20), dp(22), dp(20))
+        }
+        box.addView(RoopUi.text(this, "Face shape", 17f, R.color.ink, 1))
+        val valueLabel = RoopUi.meta(this, "${(prefs.shapeStrength * 100).toInt()}%")
+        box.addView(valueLabel)
+        val bar = SeekBar(this).apply {
+            max = 100
+            progress = (prefs.shapeStrength * 100).toInt()
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    prefs.shapeStrength = value / 100f
+                    valueLabel.text = "$value%"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) = Unit
+                override fun onStopTrackingTouch(sb: SeekBar?) {
+                    geometryKey = ""
+                    refreshSwap()
+                }
+            })
+        }
+        box.addView(bar)
+        box.addView(RoopUi.meta(this,
+            "Moves the face's overall proportion toward the source's. 0% leaves it alone. " +
+                "It cannot move one feature relative to another \u2014 that needs a " +
+                "different kind of warp \u2014 and past about 60% it usually looks wrong."))
+        box.addView(textButton("Done", R.color.blue) { dialog.dismiss() })
+        dialog.setContentView(box)
+        presentBottomSheet(dialog)
+    }
+
     private fun showStrengthSheet() {
         val dialog = Dialog(this)
         val box = LinearLayout(this).apply {
@@ -2541,6 +2609,9 @@ class MainActivity : Activity() {
                 colorMatch = prefs.colorMatch,
                 keepLips = prefs.keepLips,
                 faceBlend = prefs.faceBlend,
+                relight = prefs.relight,
+                shapeSx = shapeSx,
+                shapeSy = shapeSy,
                 clones = prefs.clones,
                 originalPath = target.absolutePath,
                 modelLabel = label,
@@ -2557,6 +2628,9 @@ class MainActivity : Activity() {
                 animate = isAnimation(target.name),
                 keepLips = prefs.keepLips,
                 faceBlend = prefs.faceBlend,
+                relight = prefs.relight,
+                shapeSx = shapeSx,
+                shapeSy = shapeSy,
                 swapEveryFace = faceMode == 1,
                 colorMatch = prefs.colorMatch,
                 originalPath = target.absolutePath,
@@ -2612,6 +2686,9 @@ class MainActivity : Activity() {
             animate = true,
             keepLips = prefs.keepLips,
             faceBlend = prefs.faceBlend,
+            relight = prefs.relight,
+            shapeSx = shapeSx,
+            shapeSy = shapeSy,
             swapEveryFace = false,
             colorMatch = prefs.colorMatch,
             originalPath = target.absolutePath,
@@ -2669,6 +2746,9 @@ class MainActivity : Activity() {
             colorMatch = prefs.colorMatch,
             keepLips = prefs.keepLips,
             faceBlend = prefs.faceBlend,
+            relight = prefs.relight,
+            shapeSx = shapeSx,
+            shapeSy = shapeSy,
             clones = prefs.clones,
             originalPath = target.absolutePath,
             modelLabel = label,
@@ -3446,6 +3526,17 @@ class MainActivity : Activity() {
                     "geometry",
                     "shape=%.3f poseDelta=%.1f yaw=%.1f/%.1f".format(shape, poseDelta, sPose.yaw, tPose.yaw),
                 )
+
+                // A scale can only change the face's overall proportion, so the
+                // correction is derived from the aspect ratio: scaling x by sx
+                // and y by sy moves the aspect by sy/sx. Keeping the area fixed
+                // (sx * sy = 1) leaves one free factor, taken part of the way
+                // toward the source by the strength slider.
+                val strength = prefs.shapeStrength
+                val ratio = (sProp.faceAspect / tProp.faceAspect).coerceIn(0.7f, 1.4f)
+                val factor = Math.pow(ratio.toDouble(), (strength / 2.0)).toFloat()
+                shapeSx = (1f / factor).coerceIn(0.85f, 1.18f)
+                shapeSy = factor.coerceIn(0.85f, 1.18f)
 
                 body.addView(RoopUi.text(this@MainActivity,
                     "Proportions   source vs target", 13f, R.color.ink, 1))

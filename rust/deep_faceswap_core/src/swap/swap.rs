@@ -80,6 +80,24 @@ pub struct SwapOptions {
     /// is mixed back toward the original aligned target, so the result keeps some
     /// of the original's structure - useful when a strong swap reads as a mask.
     pub face_blend: f32,
+
+    /// Replace the swapped face's shading with the target's.
+    ///
+    /// A swap copies pixels, and pixels carry the *source's* lighting. The
+    /// target's lighting lives in the photo around it, so without this the face
+    /// is lit from one direction and the scene from another - which reads as
+    /// pasted even when the colour matches.
+    pub relight: bool,
+
+    /// Horizontal and vertical scale applied to the swapped face, 1.0 = none.
+    ///
+    /// This is the honest limit of what a scale can do: it changes the face's
+    /// overall proportion - height against width, and the balance between
+    /// horizontal and vertical distances - but it cannot move one feature
+    /// relative to another, because scaling moves them all together. Local
+    /// feature placement needs a non-linear warp.
+    pub shape_sx: f32,
+    pub shape_sy: f32,
 }
 
 impl Default for SwapOptions {
@@ -91,6 +109,9 @@ impl Default for SwapOptions {
             enhancer_strength: 1.0,
             color_match: true,
             face_blend: 1.0,
+            relight: false,
+            shape_sx: 1.0,
+            shape_sy: 1.0,
         }
     }
 }
@@ -240,6 +261,28 @@ pub fn swap_single_pair_opts(
             }
         }
         mixed
+    };
+
+    // Shape: rescale the swapped face so its overall proportion moves toward the
+    // source's. Capped by the caller; the limits here are a second guard.
+    let swapped_face = if (opts.shape_sx - 1.0).abs() > 0.002 || (opts.shape_sy - 1.0).abs() > 0.002 {
+        log_additional!(
+            EVENT_ALIGN_FACE,
+            "Adjusting face proportion by {:.3} x {:.3}",
+            opts.shape_sx,
+            opts.shape_sy
+        );
+        rescale_face(swapped_face, opts.shape_sx, opts.shape_sy, swap_size)
+    } else {
+        swapped_face
+    };
+
+    // Physics: take the target's shading and give it to the swapped face.
+    let swapped_face = if opts.relight {
+        log_additional!(EVENT_PASTE_BACK, "Relighting the swapped face to the target");
+        relight_to_target(&swapped_face, &target_aligned.aligned_image, swap_size)
+    } else {
+        swapped_face
     };
 
     // The swapper works in normalised f32, so the colour reference is the
@@ -1408,6 +1451,121 @@ pub fn swap_faces_mapped(
 }
 
 /// One face offered to the manual mapping UI.
+/// Bilinear rescale of an aligned face about its centre.
+///
+/// Inverse mapping - each output pixel samples where it came from - so there are
+/// no gaps. Edges are clamped rather than wrapped, because wrapping would drag
+/// the far side of the face into the near side.
+fn rescale_face(img: ndarray::Array4<f32>, sx: f32, sy: f32, size: u32) -> ndarray::Array4<f32> {
+    use ndarray::Array4;
+    let n = size as usize;
+    let sx = sx.clamp(0.85, 1.18);
+    let sy = sy.clamp(0.85, 1.18);
+    let mut out = Array4::<f32>::zeros((1, 3, n, n));
+    let centre = (n as f32 - 1.0) / 2.0;
+    let max = (n - 1) as f32;
+
+    for y in 0..n {
+        for x in 0..n {
+            let sxf = ((x as f32 - centre) / sx + centre).clamp(0.0, max);
+            let syf = ((y as f32 - centre) / sy + centre).clamp(0.0, max);
+            let x0 = sxf.floor() as usize;
+            let y0 = syf.floor() as usize;
+            let x1 = (x0 + 1).min(n - 1);
+            let y1 = (y0 + 1).min(n - 1);
+            let fx = sxf - x0 as f32;
+            let fy = syf - y0 as f32;
+            for c in 0..3usize {
+                let p00 = img[[0, c, y0, x0]];
+                let p10 = img[[0, c, y0, x1]];
+                let p01 = img[[0, c, y1, x0]];
+                let p11 = img[[0, c, y1, x1]];
+                let top = p00 * (1.0 - fx) + p10 * fx;
+                let bottom = p01 * (1.0 - fx) + p11 * fx;
+                out[[0, c, y, x]] = top * (1.0 - fy) + bottom * fy;
+            }
+        }
+    }
+    out
+}
+
+/// Separable box blur over a single-channel plane.
+fn box_blur(src: &[f32], n: usize, radius: usize) -> Vec<f32> {
+    let r = radius.max(1);
+    let mut tmp = vec![0f32; n * n];
+    let mut out = vec![0f32; n * n];
+    // Horizontal.
+    for y in 0..n {
+        for x in 0..n {
+            let lo = x.saturating_sub(r);
+            let hi = (x + r).min(n - 1);
+            let mut sum = 0f32;
+            for k in lo..=hi {
+                sum += src[y * n + k];
+            }
+            tmp[y * n + x] = sum / (hi - lo + 1) as f32;
+        }
+    }
+    // Vertical.
+    for y in 0..n {
+        for x in 0..n {
+            let lo = y.saturating_sub(r);
+            let hi = (y + r).min(n - 1);
+            let mut sum = 0f32;
+            for k in lo..=hi {
+                sum += tmp[k * n + x];
+            }
+            out[y * n + x] = sum / (hi - lo + 1) as f32;
+        }
+    }
+    out
+}
+
+/// Give the swapped face the target's low-frequency shading.
+///
+/// Intrinsic-image thinking: an image is roughly albedo times shading. Shading is
+/// smooth and albedo is detailed, so a wide blur isolates the shading. Keep the
+/// swapped face's detail, substitute the target's shading, and the two sit in the
+/// same light.
+///
+/// The ratio is clamped hard. Outside roughly 0.7 to 1.45 the "shading" is no
+/// longer lighting but a different exposure or a shadow edge, and applying it
+/// would repaint the face rather than light it.
+fn relight_to_target(
+    swapped: &ndarray::Array4<f32>,
+    target: &ndarray::Array4<f32>,
+    size: u32,
+) -> ndarray::Array4<f32> {
+    let n = size as usize;
+    let radius = (n / 8).max(2);
+    let mut lum_swapped = vec![0f32; n * n];
+    let mut lum_target = vec![0f32; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            lum_swapped[y * n + x] = 0.299 * swapped[[0, 0, y, x]]
+                + 0.587 * swapped[[0, 1, y, x]]
+                + 0.114 * swapped[[0, 2, y, x]];
+            lum_target[y * n + x] = 0.299 * target[[0, 0, y, x]]
+                + 0.587 * target[[0, 1, y, x]]
+                + 0.114 * target[[0, 2, y, x]];
+        }
+    }
+    let shade_swapped = box_blur(&lum_swapped, n, radius);
+    let shade_target = box_blur(&lum_target, n, radius);
+
+    let mut out = swapped.clone();
+    for y in 0..n {
+        for x in 0..n {
+            let i = y * n + x;
+            let ratio = ((shade_target[i] + 0.02) / (shade_swapped[i] + 0.02)).clamp(0.7, 1.45);
+            for c in 0..3usize {
+                out[[0, c, y, x]] = (out[[0, c, y, x]] * ratio).clamp(0.0, 1.0);
+            }
+        }
+    }
+    out
+}
+
 pub struct MappingFace {
     /// Index in detection order (highest score first) — what a mapping refers to.
     pub index: usize,

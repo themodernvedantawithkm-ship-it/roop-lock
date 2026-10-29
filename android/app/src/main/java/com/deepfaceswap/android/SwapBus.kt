@@ -79,6 +79,11 @@ object SwapBus {
             val keepLips: Boolean,
             /** 0.0 the untouched face .. 1.0 the swap in full. */
             val faceBlend: Float,
+            /** Light the swapped face with the target's shading. */
+            val relight: Boolean = true,
+            /** Proportion adjustment, 1.0 = none. */
+            val shapeSx: Float = 1f,
+            val shapeSy: Float = 1f,
             /** Clones of the model to run in parallel; 1 means a single session. */
             val clones: Int,
             val originalPath: String,
@@ -98,6 +103,11 @@ object SwapBus {
             val keepLips: Boolean,
             /** 0.0 the untouched face .. 1.0 the swap in full. */
             val faceBlend: Float,
+            /** Light the swapped face with the target's shading. */
+            val relight: Boolean = true,
+            /** Proportion adjustment, 1.0 = none. */
+            val shapeSx: Float = 1f,
+            val shapeSy: Float = 1f,
             val swapEveryFace: Boolean,
             val colorMatch: Boolean,
             val originalPath: String,

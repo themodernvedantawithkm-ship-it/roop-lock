@@ -83,6 +83,16 @@ class Prefs(context: Context) {
         get() = sp.getString("last_source", "") ?: ""
         set(v) = sp.edit().putString("last_source", v).apply()
 
+    /** Give the swapped face the target's lighting. */
+    var relight: Boolean
+        get() = sp.getBoolean("relight", true)
+        set(v) = sp.edit().putBoolean("relight", v).apply()
+
+    /** How far to push the proportion adjustment toward the source, 0..1. */
+    var shapeStrength: Float
+        get() = sp.getFloat("shape_strength", 0f)
+        set(v) = sp.edit().putFloat("shape_strength", v.coerceIn(0f, 1f)).apply()
+
     /** Leave the target's mouth and lips untouched by the swap. */
     var keepLips: Boolean
         get() = sp.getBoolean("keep_lips", false)
