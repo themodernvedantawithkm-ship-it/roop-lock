@@ -1,6 +1,7 @@
 package com.deepfaceswap.android
 
 import kotlin.math.abs
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
@@ -77,28 +78,37 @@ object FaceMath {
         val eyeDy = l.rightEye.second - l.leftEye.second
         val roll = Math.toDegrees(atan2(eyeDy, eyeDx).toDouble()).toFloat()
 
+        // Yaw from how unevenly the nose sits between the two eyes.
+        //
+        // The first version of this divided the nose's *vertical* offset by half
+        // the eye distance and called it yaw, which reports about 66 degrees for
+        // any normal front-on face - the number was really the nose drop, i.e.
+        // pitch, under the wrong name. Distance to each eye is symmetric for a
+        // front-on face and collapses on one side in profile, which is what yaw
+        // actually looks like in two dimensions.
+        val dLeft = hypot(l.nose.first - l.leftEye.first, l.nose.second - l.leftEye.second)
+        val dRight = hypot(l.nose.first - l.rightEye.first, l.nose.second - l.rightEye.second)
+        val spread = (dLeft + dRight).coerceAtLeast(1f)
+        val yawRatio = ((dRight - dLeft) / spread).coerceIn(-1f, 1f)
+        val yaw = Math.toDegrees(asin(yawRatio.toDouble())).toFloat()
+
+        // Pitch from where the nose sits vertically between the eyes and the
+        // mouth, measured after undoing roll so a tilted head is not read as a
+        // nodding one. Front-on lands near 0.575 of the way down.
         val eyeMidX = (l.leftEye.first + l.rightEye.first) / 2f
         val eyeMidY = (l.leftEye.second + l.rightEye.second) / 2f
-        val mouthMidX = (l.leftMouth.first + l.rightMouth.first) / 2f
-        val mouthMidY = (l.leftMouth.second + l.rightMouth.second) / 2f
-
-        val halfEye = (iod(l) / 2f).coerceAtLeast(1f)
-        val mouthToEye = (mouthMidY - eyeMidY).coerceAtLeast(1f)
-
-        // Undo roll before reading the two other axes, or a tilted head reads as
-        // a turned one.
         val rad = Math.toRadians(-roll.toDouble())
         val c = cos(rad).toFloat()
         val s = sin(rad).toFloat()
-        fun rotY(x: Float, y: Float): Float = (x - eyeMidX) * s + (y - eyeMidY) * c
+        fun yRot(x: Float, y: Float): Float =
+            (x - eyeMidX) * s + (y - eyeMidY) * c
 
-        // Nose left of the eye midpoint means the head turned to its left.
-        val yawRatio = (rotY(l.nose.first, l.nose.second) / halfEye).coerceIn(-1.5f, 1.5f)
-        val yaw = yawRatio * 55f
-
-        // Where the nose sits vertically between the eyes and the mouth: 0 at the
-        // eyes, 1 at the mouth. Front-on is around 0.55-0.6.
-        val pitchRatio = ((l.nose.second - eyeMidY) / mouthToEye).coerceIn(-1f, 2f)
+        val mouthDrop = yRot(
+            (l.leftMouth.first + l.rightMouth.first) / 2f,
+            (l.leftMouth.second + l.rightMouth.second) / 2f,
+        )
+        val noseDrop = yRot(l.nose.first, l.nose.second)
+        val pitchRatio = if (mouthDrop > 1f) (noseDrop / mouthDrop).coerceIn(-1f, 2f) else 0.575f
         val pitch = (pitchRatio - 0.575f) * 90f
 
         return Pose(yaw = yaw, pitch = pitch, roll = roll)
