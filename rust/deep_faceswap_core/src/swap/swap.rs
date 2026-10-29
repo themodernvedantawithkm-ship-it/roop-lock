@@ -266,12 +266,7 @@ pub fn swap_single_pair_opts(
     // Shape: rescale the swapped face so its overall proportion moves toward the
     // source's. Capped by the caller; the limits here are a second guard.
     let swapped_face = if (opts.shape_sx - 1.0).abs() > 0.002 || (opts.shape_sy - 1.0).abs() > 0.002 {
-        log_additional!(
-            EVENT_ALIGN_FACE,
-            "Adjusting face proportion by {:.3} x {:.3}",
-            opts.shape_sx,
-            opts.shape_sy
-        );
+        log_additional!(EVENT_ALIGN_FACE, "Adjusting face proportion toward the source");
         rescale_face(swapped_face, opts.shape_sx, opts.shape_sy, swap_size)
     } else {
         swapped_face
