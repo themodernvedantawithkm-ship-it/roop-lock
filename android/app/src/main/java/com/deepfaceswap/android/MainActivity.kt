@@ -90,6 +90,13 @@ class MainActivity : Activity() {
     /** Target face index -> saved person id, for group casting. */
     private val castMap = mutableMapOf<Int, String>()
     private lateinit var castCard: LinearLayout
+    /** Person chosen for a batch run. */
+    private var batchPerson: PeopleStore.Person? = null
+    private val batchTargets = mutableListOf<File>()
+    private lateinit var batchBody: LinearLayout
+    private lateinit var batchCta: android.view.View
+    private lateinit var batchCancel: android.view.View
+    private val batchListener: (BatchRunner.State) -> Unit = { st -> runCatching { renderBatchState(st) } }
     /** Proportion adjustment derived from the last measurement, 1.0 = none. */
     private var shapeSx = 1f
     private var shapeSy = 1f
@@ -168,6 +175,7 @@ class MainActivity : Activity() {
         swapperFile = prefs.modelFile
         vMute = prefs.muteAudio
         people = PeopleStore(this)
+        BatchRunner.addListener(batchListener)
         models.ensureDirs()
         models.copyEmapFromAssetsIfPresent()
         // Bring back the source face from last time, if the file is still there.
@@ -193,6 +201,7 @@ class MainActivity : Activity() {
         screens["video"] = buildVideoScreen().also { content.addView(it) }
         screens["history"] = buildHistoryScreen().also { content.addView(it) }
         screens["people"] = buildPeopleScreen().also { content.addView(it) }
+        screens["batch"] = buildBatchScreen().also { content.addView(it) }
         screens["settings"] = buildSettingsScreen().also { content.addView(it) }
         screens["tools"] = buildToolsScreen().also { content.addView(it) }
 
@@ -202,6 +211,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy()
         SwapBus.removeListener(swapListener)
+        BatchRunner.removeListener(batchListener)
     }
 
     /**
@@ -1700,6 +1710,9 @@ class MainActivity : Activity() {
                 pickMedia(REQ_PERSON_PHOTOS, multiple = true, allowVideo = false)
             }
         })
+        addCard.addView(RoopUi.secondaryButton(this, "Batch apply", R.drawable.ic_play).apply {
+            setOnClickListener { show("batch") }
+        })
         addCard.addView(RoopUi.meta(this,
             "Pick two or three photos of the same person. Different angles and light " +
                 "make the average stronger, not weaker."))
@@ -1978,6 +1991,133 @@ class MainActivity : Activity() {
         peopleRow.addView(RoopUi.optionTile(
             this, R.drawable.ic_tools, "Manage", "Add or remove",
         ).apply { setOnClickListener { show("people") } })
+    }
+
+    /**
+     * Batch: one person, many photos.
+     *
+     * The point of a saved person is that this becomes one action instead of
+     * twelve. Results are listed per photo, because a batch that reports "done"
+     * while three files silently failed is worse than no batch at all.
+     */
+    private fun buildBatchScreen(): View {
+        val col = pageColumn()
+        col.addView(RoopUi.screenTitle(this, "Batch"))
+        col.addView(RoopUi.body(this,
+            "Put one saved person into many photos.").apply {
+            layoutParams = RoopUi.margin(this@MainActivity, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 4, 0, 16)
+        })
+
+        val whoCard = RoopUi.card(this)
+        whoCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_person, "Who", "Pick a saved person",
+        ))
+        val whoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        whoCard.addView(RoopUi.hScroll(this, whoRow))
+        val list = people.all().filter { it.hasMeanFace }
+        if (list.isEmpty()) {
+            whoCard.addView(RoopUi.meta(this, "No one saved yet - add someone on the People page."))
+        } else {
+            list.forEach { person ->
+                whoRow.addView(RoopUi.optionTile(
+                    this, R.drawable.ic_person, person.name,
+                    if (batchPerson?.id == person.id) "selected" else person.quality,
+                ).apply {
+                    setOnClickListener {
+                        batchPerson = person
+                        show("batch")
+                    }
+                })
+            }
+        }
+        col.addView(whoCard)
+
+        val photosCard = RoopUi.card(this)
+        photosCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_image, "Photos", "${batchTargets.size} chosen",
+        ))
+        photosCard.addView(RoopUi.secondaryButton(this, "Choose photos", R.drawable.ic_image).apply {
+            setOnClickListener { pickMedia(REQ_BATCH_TARGETS, multiple = true, allowVideo = false) }
+        })
+        photosCard.addView(RoopUi.meta(this,
+            "Still images only for now. GIFs and videos are skipped rather than half-done."))
+        col.addView(photosCard)
+
+        val runCard = RoopUi.card(this)
+        batchCta = RoopUi.primaryButton(this, "Start batch", R.drawable.ic_play).apply {
+            setOnClickListener {
+                val person = batchPerson
+                if (person == null) { toast("Pick a person first"); return@setOnClickListener }
+                if (batchTargets.isEmpty()) { toast("Choose some photos first"); return@setOnClickListener }
+                BatchRunner.start(
+                    this@MainActivity,
+                    BatchRunner.Settings(
+                        sourcePath = person.meanFacePath,
+                        personName = person.name,
+                        swapperFile = swapperFile,
+                        pixelBoost = qualityGrid(),
+                        enhancerStrength = if (restoreOn) prefs.restoreStrength else 1f,
+                        keepLips = prefs.keepLips,
+                        faceBlend = prefs.faceBlend,
+                        colorMatch = prefs.colorMatch,
+                        relight = prefs.relight,
+                        shapeSx = shapeSx,
+                        shapeSy = shapeSy,
+                        outputFormat = prefs.outputFormat,
+                    ),
+                    batchTargets.toList(),
+                )
+            }
+        }
+        runCard.addView(batchCta)
+        batchCancel = RoopUi.secondaryButton(this, "Cancel batch", null).apply {
+            setOnClickListener { BatchRunner.cancel() }
+        }
+        runCard.addView(batchCancel)
+        col.addView(runCard)
+
+        val resultsCard = RoopUi.card(this)
+        resultsCard.addView(RoopUi.sectionHeader(
+            this, R.drawable.ic_history, "Results", "One line per photo",
+        ))
+        batchBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        resultsCard.addView(batchBody)
+        col.addView(resultsCard)
+
+        renderBatchState(BatchRunner.state)
+        return col
+    }
+
+    private fun renderBatchState(st: BatchRunner.State) {
+        if (!::batchBody.isInitialized) return
+        batchBody.removeAllViews()
+        if (st.total == 0) {
+            batchBody.addView(RoopUi.meta(this, "Nothing run yet."))
+        } else {
+            batchBody.addView(RoopUi.text(this,
+                "${st.done} of ${st.total}" + if (st.running) " \u00B7 running" else " \u00B7 finished",
+                14f, R.color.ink, 1))
+            st.items.forEach { item ->
+                val mark = when (item.status) {
+                    BatchRunner.Status.DONE -> "done"
+                    BatchRunner.Status.FAILED -> "failed"
+                    BatchRunner.Status.SKIPPED -> "skipped"
+                    BatchRunner.Status.RUNNING -> "running"
+                    BatchRunner.Status.QUEUED -> "queued"
+                }
+                val line = "${item.target.name}  \u2014  $mark" +
+                    if (item.message.isNotEmpty()) ": ${item.message}" else ""
+                batchBody.addView(RoopUi.meta(this, line))
+            }
+            if (!st.running) {
+                val ok = st.items.count { it.status == BatchRunner.Status.DONE }
+                batchBody.addView(RoopUi.meta(this,
+                    "$ok succeeded, ${st.items.size - ok} did not. Results are in the app's outputs folder."))
+            }
+        }
+        if (::batchCta.isInitialized) RoopUi.setPrimaryEnabled(batchCta, !st.running)
+        if (::batchCancel.isInitialized) batchCancel.visibility = if (st.running) View.VISIBLE else View.GONE
     }
 
     private fun buildSettingsScreen(): View {
@@ -3523,6 +3663,11 @@ class MainActivity : Activity() {
                 createPerson(picked)
                 return
             }
+            REQ_BATCH_TARGETS -> {
+                batchTargets.clear(); batchTargets.addAll(picked)
+                show("batch")
+                return
+            }
             REQ_TARGET -> {
                 targetFile = picked.first(); faces = null; mappings.clear()
                 castMap.clear()
@@ -3999,6 +4144,7 @@ class MainActivity : Activity() {
         const val REQ_CAM_TARGET = 18
         const val REQ_PHONE_UNLOCK = 19
         const val REQ_PERSON_PHOTOS = 20
+        const val REQ_BATCH_TARGETS = 21
         const val REQ_PERMISSION = 17
         const val REQ_NOTIFICATIONS = 19
 
