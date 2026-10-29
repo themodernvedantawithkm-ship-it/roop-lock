@@ -177,7 +177,7 @@ object LockScreen {
                     } else {
                         error.text = "Wrong PIN \u2014 ${MAX_ATTEMPTS - attempts} left"
                     }
-                    root.animate().translationX(dp(8)).setDuration(60).withEndAction {
+                    root.animate().translationX(dp(8).toFloat()).setDuration(60).withEndAction {
                         root.animate().translationX(0f).setDuration(60).start()
                     }.start()
                     paint()
